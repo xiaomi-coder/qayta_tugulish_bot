@@ -22,7 +22,7 @@ PRICE_30_DAY   = int(os.getenv("PRICE_30_DAY",   "149000"))
 PRICE_3_MONTH  = int(os.getenv("PRICE_3_MONTH",  "349000"))
 
 # ── Kanal
-CHANNEL = os.getenv("CHANNEL", "@farruxradjabov")
+CHANNEL = os.getenv("CHANNEL", "@QaytaTugulishBot")
 
 # ── Vazn bo'yicha ratsion ranji
 def get_plan_by_weight(weight: float) -> str:

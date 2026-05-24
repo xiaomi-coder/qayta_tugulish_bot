@@ -43,7 +43,7 @@ def get_watermark() -> str:
     return (
         "\n" + line + "\n"
         + "💬 " + WATERMARKS[idx] + "\n"
-        + "🔥 Qayta Tugilish | @farruxradjabov\n"
+        + "🔥 Qayta Tug'ilish Marafon | @QaytaTugulishBot\n"
         + line
     )
 
@@ -55,7 +55,7 @@ def get_watermark() -> str:
     return (
         f"\n━━━━━━━━━━━━━━━━━\n"
         f"💬 {WATERMARKS[idx]}\n"
-        f"🔥 Qayta Tug\'ilish | @farruxradjabov\n"
+        f"🔥 Qayta Tug'ilish Marafon | @QaytaTugulishBot\n"
         f"━━━━━━━━━━━━━━━━━"
     )
 
@@ -490,7 +490,7 @@ async def admin_reject_payment(call: CallbackQuery):
     await call.bot.send_message(
         int(uid),
         "❌ *To'lovingiz tasdiqlanmadi.*\n\n"
-        "Muammo bo'lsa @farruxradjabov ga murojaat qiling.\n\n"
+        "Muammo bo'lsa @QaytaTugulishBot ga murojaat qiling.\n\n"
         "Qayta to'lov qilish uchun /start bosing.",
         parse_mode="Markdown"
     )
@@ -1996,7 +1996,7 @@ async def bc_target_v2(call: CallbackQuery, state: FSMContext):
             "⏳ *Hurmatli foydalanuvchi!*\n\n"
             "To'lovingiz hali tasdiqlanmagan.\n"
             "Agar to'lov qilgan bo'lsangiz, chek rasmini yuboring.\n\n"
-            "Savollar uchun: @farruxradjabov"
+            "Savollar uchun: @QaytaTugulishBot"
         ),
         "never_paid": (
             "🔥 *Salom!*\n\n"

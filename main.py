@@ -49,7 +49,7 @@ async def main():
     logger.info("✅ Bot polling boshlandi!")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("   QAYTA TUG'ILISH FITNESS BOT")
-    logger.info("   @farruxradjabov tomonidan")
+    logger.info("   @QaytaTugulishBot")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     try:
