@@ -394,14 +394,14 @@ async def receipt_received(msg: Message, state: FSMContext):
 
     admin_text = (
         f"💰 *YANGI TO'LOV CHEKI*\n\n"
-        f"👤 {user['full_name'] if user else 'Noma\'lum'}\n"
+        f"👤 {user['full_name'] if user else 'Noma lum'}\n"
         f"📱 {user['phone'] if user else '-'}\n"
         f"⚖️ {user['weight'] if user else '-'} kg\n"
         f"🥗 Ratsion: {plan_name}\n"
         f"💳 Usul: {method_name}\n"
         f"💰 Summa: *{PRICE_30_DAY:,} so'm*\n"
         f"🆔 To'lov ID: #{pay_id}\n"
-        f"👤 TG: @{user['username'] or 'yo\'q'} | ID: {msg.from_user.id}"
+        f"👤 TG: @{user['username'] or 'yoq'} | ID: {msg.from_user.id}"
     )
 
     for admin_id in ADMIN_IDS:
@@ -599,7 +599,7 @@ async def stats_main(msg: Message):
         f"🏆 Bajarilgan kunlar: *{len(completed)}/30*\n"
         f"📊 {progress_bar(len(completed))}\n"
         f"💧 Bugungi suv: *{water}ml*\n"
-        f"👑 Premium: *{'Ha ✅' if user.get('is_premium') else 'Yo\'q ❌'}*",
+        f"👑 Premium: *{'Ha ✅' if user.get('is_premium') else 'Yoq ❌'}*",
         parse_mode="Markdown"
     )
 
@@ -619,7 +619,7 @@ async def profile_main(msg: Message):
         f"📏 {user.get('height',0)} sm | ⚖️ {user.get('weight',0)} kg\n"
         f"📊 BMI: {bmi:.1f} — {bt}\n"
         f"🥗 Ratsion: {plan}\n"
-        f"👑 Premium: {'Ha ✅' if user.get('is_premium') else 'Yo\'q ❌'}",
+        f"👑 Premium: {'Ha ✅' if user.get('is_premium') else 'Yoq ❌'}",
         parse_mode="Markdown"
     )
 
