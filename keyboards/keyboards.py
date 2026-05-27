@@ -219,6 +219,7 @@ def admin_kb() -> InlineKeyboardMarkup:
     b.button(text="Ovqat rasmi yuklash",    callback_data="admin:upload_photo")
     b.button(text="Mashq videosi yuklash",  callback_data="admin:upload_video")
     b.button(text="Salomlashuv videosi",    callback_data="admin:welcome_video")
+    b.button(text="Motivatsiya videosi",    callback_data="admin:motivation_video")
     b.button(text="Ratsion tahrirlash",     callback_data="admin:edit_nutrition")
     b.button(text="Hammaga xabar",          callback_data="admin:broadcast")
     b.button(text="Foydalanuvchilar",       callback_data="admin:users")

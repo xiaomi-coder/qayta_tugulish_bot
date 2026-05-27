@@ -89,6 +89,7 @@ class AdminSt(StatesGroup):
     video_type   = State()
     video_file   = State()
     welcome_vid  = State()
+    motiv_vid    = State()
     premium_id   = State()
     edit_plan_key = State()
     edit_plan_field = State()
@@ -986,6 +987,48 @@ async def admin_welcome_video_save(msg: Message, state: FSMContext):
     await save_bot_media("welcome_video", msg.video.file_id, "video")
     await state.clear()
     await msg.answer("✅ Salomlashuv videosi saqlandi!", reply_markup=admin_kb())
+
+@router.message(AdminSt.welcome_vid, F.video_note)
+async def admin_welcome_vidnote_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
+    await save_bot_media("welcome_video", msg.video_note.file_id, "video_note")
+    await state.clear()
+    await msg.answer("✅ Salomlashuv videosi (aylana) saqlandi!", reply_markup=admin_kb())
+
+# ── Motivatsiya videosi ──────────────────────────────────────
+@router.callback_query(F.data == "admin:motivation_video")
+async def admin_motivation_video(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    await call.message.edit_text(
+        "🎬 *MOTIVATSIYA VIDEOSI*\n\n"
+        "Har kuni ertalab 07:00 da barcha foydalanuvchilarga\n"
+        "yuboriladi (ertalabki xabar bilan birga).\n\n"
+        "Videoni yuboring (oddiy yoki aylana ⭕):"
+    )
+    await state.set_state(AdminSt.motiv_vid)
+    await call.answer()
+
+@router.message(AdminSt.motiv_vid, F.video)
+async def admin_motiv_video_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
+    await save_bot_media("motivation_video", msg.video.file_id, "video")
+    await state.clear()
+    await msg.answer(
+        "✅ Motivatsiya videosi saqlandi!\n\n"
+        "Ertadan boshlab har kuni 07:00 da yuboriladi 🔥",
+        reply_markup=admin_kb()
+    )
+
+@router.message(AdminSt.motiv_vid, F.video_note)
+async def admin_motiv_vidnote_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
+    await save_bot_media("motivation_video", msg.video_note.file_id, "video_note")
+    await state.clear()
+    await msg.answer(
+        "✅ Motivatsiya videosi (aylana) saqlandi!\n\n"
+        "Ertadan boshlab har kuni 07:00 da yuboriladi 🔥",
+        reply_markup=admin_kb()
+    )
 
 @router.callback_query(F.data == "admin:edit_nutrition")
 async def admin_edit_nutrition(call: CallbackQuery):
