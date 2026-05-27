@@ -531,31 +531,72 @@ async def challenge_main(msg: Message):
 async def my_nutrition(msg: Message):
     if not await check_premium(msg): return
     user = await get_user(msg.from_user.id)
-    plan_key = user.get("plan_key", "standard")
-    plan = await get_nutrition_plan(plan_key)
+    weight = user.get("weight") or 100
 
-    if not plan:
-        await msg.answer("Ratsion topilmadi. Admin bilan bog'laning."); return
+    from data.ration_data import get_ration_for_weight
+    from utils.card_generator import create_meal_card, create_water_card
+    from aiogram.types import BufferedInputFile
 
-    meals_list = ""
-    if plan.get("meals"):
-        for m in plan["meals"].split("|"):
-            meals_list += f"• {m.strip()}\n"
+    ration = get_ration_for_weight(float(weight))
+    total_cal  = sum(m["cal"]     for m in ration["meals"])
+    total_prot = sum(m["protein"] for m in ration["meals"])
+    total_carb = sum(m["carbs"]   for m in ration["meals"])
+    total_fat  = sum(m["fat"]     for m in ration["meals"])
 
+    # ── Xulosa xabar ──
     await msg.answer(
-        f"🥗 *SIZNING RATSIONINGIZ*\n\n"
-        f"📋 *{plan['title']}*\n\n"
-        f"📊 Kaloriya: *{plan['cal_range']}* kkal/kun\n"
-        f"💪 Oqsil: *{plan['protein']}*\n"
-        f"🌾 Uglevod: *{plan['carb']}*\n"
-        f"🫒 Yog': *{plan['fat']}*\n\n"
+        f"🥗 *SIZNING KUNLIK RATSIONINGIZ*\n\n"
+        f"📊 Kategoriya: *{ration['title']}*\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"📝 *Tavsif:*\n_{plan['description']}_\n\n"
+        f"🔥 Jami kaloriya: *{total_cal} kkal/kun*\n"
+        f"💪 Oqsil:   *{total_prot}g*\n"
+        f"🌾 Uglevod: *{total_carb}g*\n"
+        f"🫒 Yog':    *{total_fat}g*\n"
+        f"💧 Suv:     *{ration['water']}*\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"🍽️ *Kunlik menyu:*\n{meals_list}" + get_watermark(),
-        parse_mode="Markdown",
-        protect_content=True
+        f"_Kartochkalar yuklanmoqda..._ ⏳",
+        parse_mode="Markdown"
     )
+
+    # ── Har bir ovqat uchun kartochka ──
+    emoji_map = ["🌅", "🌞", "🍎", "🌙", "⭐"]
+    for i, meal in enumerate(ration["meals"]):
+        try:
+            card_bytes = create_meal_card(meal, i, len(ration["meals"]), ration["title"])
+            photo = BufferedInputFile(card_bytes, filename=f"meal_{i+1}.png")
+            em = emoji_map[i] if i < len(emoji_map) else "🍽️"
+            caption = (
+                f"{em} *{meal['name']}*\n"
+                f"⏰ {meal['time']}\n"
+                f"🔥 {meal['cal']} kkal  |  💪 {meal['protein']}g oqsil"
+            )
+            await msg.answer_photo(
+                photo=photo,
+                caption=caption,
+                parse_mode="Markdown",
+                protect_content=True
+            )
+        except Exception as e:
+            logger.error(f"Kartochka xatosi (ovqat {i+1}): {e}")
+            await msg.answer(
+                f"*{meal['name']}* — {meal['time']}\n" +
+                "\n".join(f"• {f}" for f in meal["foods"]),
+                parse_mode="Markdown"
+            )
+
+    # ── Suv kartochkasi ──
+    try:
+        water_card = create_water_card(ration["water"], ration["title"])
+        photo = BufferedInputFile(water_card, filename="water.png")
+        await msg.answer_photo(
+            photo=photo,
+            caption=f"💧 *Kunlik suv normasini unutmang!*\n_{ration['water']} ichi_ 🏆",
+            parse_mode="Markdown",
+            protect_content=True
+        )
+    except Exception as e:
+        logger.error(f"Suv kartochkasi xatosi: {e}")
+        await msg.answer(f"💧 *Suv:* {ration['water']} iching!", parse_mode="Markdown")
 
 @router.message(F.text == "💧 Suv Tracker")
 async def water_main(msg: Message):
