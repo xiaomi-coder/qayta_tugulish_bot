@@ -66,17 +66,15 @@ MEALS_DATA = {
 }
 
 # ── Har kunning ovqat rejasi
-def get_day_meals(day: int) -> list[dict]:
-    meals = [
-        MEALS_DATA["nonushta"],
-        MEALS_DATA["ikkinchi_nonushta"],
-        MEALS_DATA["tushlik"],
-        MEALS_DATA["kechki_oldi"],
-    ]
-    # Har 5 kunda kechki ovqat qo'shiladi
-    if day % 5 == 0:
-        meals.append(MEALS_DATA["kechki"])
-    return meals
+# Foydalanuvchining haqiqiy ratsioni — har kuni bir xil 5 ta ovqat
+def get_day_meals(day: int, weight: float = 100.0, gender: str = "erkak") -> list[dict]:
+    """
+    Har kuni foydalanuvchining shaxsiy ratsion ovqatlarini qaytaradi.
+    30-kunlik challenge davomida har kunda bir xil 5 ta ovqat ko'rsatiladi.
+    """
+    from data.ration_data import get_ration_for_weight_gender
+    ration = get_ration_for_weight_gender(weight, gender)
+    return ration["meals"]
 
 
 # ═══════════════════════════════════════

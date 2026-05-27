@@ -704,10 +704,14 @@ async def cb_complete(call: CallbackQuery):
 @router.callback_query(F.data.startswith("meals:"))
 async def cb_meals(call: CallbackQuery):
     day = int(call.data.split(":")[1])
-    meals = get_day_meals(day)
+    user = await get_user(call.from_user.id)
+    weight = float(user.get("weight", 100)) if user else 100.0
+    gender = user.get("gender", "erkak") if user else "erkak"
+    meals = get_day_meals(day, weight, gender)
     logged = await get_logged_meals(call.from_user.id, day)
     await call.message.edit_text(
-        f"🍽️ *{day}-KUN OVQATLARI*\n✅ = Iste'mol qilindi",
+        f"🍽️ *{day}-KUN OVQATLARI*\n✅ = Iste'mol qilindi\n\n"
+        f"_Ratsion har kuni bir xil — siz tayyorlagan 5 ta ovqat_",
         reply_markup=meals_kb(day, meals, logged), parse_mode="Markdown"
     )
     await call.answer()
@@ -716,19 +720,25 @@ async def cb_meals(call: CallbackQuery):
 async def cb_meal_detail(call: CallbackQuery):
     _, day, idx = call.data.split(":")
     day, idx = int(day), int(idx)
-    meals = get_day_meals(day)
+    user = await get_user(call.from_user.id)
+    weight = float(user.get("weight", 100)) if user else 100.0
+    gender = user.get("gender", "erkak") if user else "erkak"
+    meals = get_day_meals(day, weight, gender)
     meal = meals[idx]
     logged = await get_logged_meals(call.from_user.id, day)
     is_logged = idx in logged
     photo_id = await get_meal_photo(day, idx)
 
+    recipe = meal.get("recipe") or meal.get("note", "")
     text = (
-        f"{meal['icon']} *{meal['name']}* — {meal['time']}\n\n"
-        f"🔥 {meal['cal']} kkal | 💪 {meal['protein']}g oqsil\n\n"
+        f"{meal.get('icon', '🍽️')} *{meal['name']}* — {meal['time']}\n\n"
+        f"🔥 {meal['cal']} kkal | 💪 {meal['protein']}g oqsil"
+        f" | 🥦 {meal.get('carbs', 0)}g uglevod | 🫙 {meal.get('fat', 0)}g yog\n\n"
         f"━━━━━━━━━━━━━━━━━\n🛒 *MAHSULOTLAR:*\n"
     )
     for f in meal["foods"]: text += f"• {f}\n"
-    text += f"\n━━━━━━━━━━━━━━━━━\n👨‍🍳 *TAYYORLASH:*\n\n{meal['recipe']}"
+    if recipe:
+        text += f"\n━━━━━━━━━━━━━━━━━\n👨‍🍳 *TAYYORLASH:*\n\n{recipe}"
     kb = meal_detail_kb(day, idx, is_logged)
 
     text_protected = wprotect(text)
@@ -767,17 +777,23 @@ async def cb_meal_toggle(call: CallbackQuery):
     logged_now = await log_meal(call.from_user.id, day, idx)
     await call.answer("✅ Qayd etildi!" if logged_now else "↩️ Bekor qilindi")
     logged = await get_logged_meals(call.from_user.id, day)
-    meals = get_day_meals(day)
+    user = await get_user(call.from_user.id)
+    weight = float(user.get("weight", 100)) if user else 100.0
+    gender = user.get("gender", "erkak") if user else "erkak"
+    meals = get_day_meals(day, weight, gender)
     meal = meals[idx]
+    recipe = meal.get("recipe") or meal.get("note", "")
     text = (
-        f"{meal['icon']} *{meal['name']}* — {meal['time']}\n\n"
-        f"🔥 {meal['cal']} kkal | 💪 {meal['protein']}g oqsil\n\n"
+        f"{meal.get('icon', '🍽️')} *{meal['name']}* — {meal['time']}\n\n"
+        f"🔥 {meal['cal']} kkal | 💪 {meal['protein']}g oqsil"
+        f" | 🥦 {meal.get('carbs', 0)}g uglevod | 🫙 {meal.get('fat', 0)}g yog\n\n"
         f"━━━━━━━━━━━━━━━━━\n🛒 *MAHSULOTLAR:*\n"
     )
     for f in meal["foods"]: text += f"• {f}\n"
-    text += f"\n━━━━━━━━━━━━━━━━━\n👨‍🍳 *TAYYORLASH:*\n\n{meal['recipe']}"
+    if recipe:
+        text += f"\n━━━━━━━━━━━━━━━━━\n👨‍🍳 *TAYYORLASH:*\n\n{recipe}"
     try:
-        await call.message.edit_text(text, reply_markup=meal_detail_kb(day,idx,idx in logged),
+        await call.message.edit_text(text, reply_markup=meal_detail_kb(day, idx, idx in logged),
                                       parse_mode="Markdown")
     except Exception: pass
 
@@ -1143,15 +1159,15 @@ async def admin_photo_day(msg: Message, state: FSMContext):
     except Exception:
         await msg.answer("❌ 1-30 kiriting:"); return
     await state.update_data(photo_day=day)
-    meals = get_day_meals(day)
-    lst = "\n".join([f"{i+1}. {m['icon']} {m['name']}" for i,m in enumerate(meals)])
+    meals = get_day_meals(day)  # default 100kg erkak uchun
+    lst = "\n".join([f"{i+1}. {m.get('icon','🍽️')} {m['name']}" for i,m in enumerate(meals)])
     await msg.answer(f"Qaysi ovqat? (raqam)\n{lst}")
     await state.set_state(AdminSt.photo_meal)
 
 @router.message(AdminSt.photo_meal)
 async def admin_photo_meal(msg: Message, state: FSMContext):
     data = await state.get_data()
-    meals = get_day_meals(data["photo_day"])
+    meals = get_day_meals(data["photo_day"])  # default ration
     try:
         idx = int(msg.text)-1; assert 0<=idx<len(meals)
     except Exception:
