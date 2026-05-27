@@ -341,20 +341,24 @@ async def receipt_received(msg: Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
-    # Admin ga xabar
-    method_name = {"payme":"🟢 Payme","click":"🔵 Click","card":"💳 Karta"}.get(method, method)
-    plan_name = PLAN_NAMES.get(user.get("plan_key","standard"), "") if user else ""
+    # Admin ga xabar — HTML ishlatiladi (Markdown foydalanuvchi ismidagi _ * belgilarni buzadi)
+    method_name = {"payme": "Payme", "click": "Click", "card": "Karta"}.get(method, method)
+    plan_name   = PLAN_NAMES.get(user.get("plan_key", "standard"), "") if user else ""
+    uname       = user.get("username") or "yoq" if user else "yoq"
+    fname       = user.get("full_name", "Noma'lum") if user else "Noma'lum"
+    phone       = user.get("phone", "-") if user else "-"
+    weight      = user.get("weight", "-") if user else "-"
 
     admin_text = (
-        f"💰 *YANGI TO'LOV CHEKI*\n\n"
-        f"👤 {user['full_name'] if user else 'Noma lum'}\n"
-        f"📱 {user['phone'] if user else '-'}\n"
-        f"⚖️ {user['weight'] if user else '-'} kg\n"
-        f"🥗 Ratsion: {plan_name}\n"
-        f"💳 Usul: {method_name}\n"
-        f"💰 Summa: *{PRICE_30_DAY:,} so'm*\n"
-        f"🆔 To'lov ID: #{pay_id}\n"
-        f"👤 TG: @{user['username'] or 'yoq'} | ID: {msg.from_user.id}"
+        f"<b>YANGI TOLOV CHEKI</b>\n\n"
+        f"Ism: <b>{fname}</b>\n"
+        f"Tel: {phone}\n"
+        f"Vazn: {weight} kg\n"
+        f"Ratsion: {plan_name}\n"
+        f"Usul: {method_name}\n"
+        f"Summa: <b>{PRICE_30_DAY:,} som</b>\n"
+        f"Tolov ID: #{pay_id}\n"
+        f"TG: @{uname} | ID: {msg.from_user.id}"
     )
 
     for admin_id in ADMIN_IDS:
@@ -364,10 +368,11 @@ async def receipt_received(msg: Message, state: FSMContext):
                 photo=file_id,
                 caption=admin_text,
                 reply_markup=payment_confirm_kb(pay_id, msg.from_user.id),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
+            logger.info(f"Admin {admin_id} ga tolov xabari yuborildi (pay_id={pay_id})")
         except Exception as e:
-            logger.error(f"Admin ga xabar yuborilmadi: {e}")
+            logger.error(f"Admin {admin_id} ga xabar yuborilmadi: {e}")
 
 # ══════════════════════════════════
 # ADMIN: PAYMENT CONFIRM / REJECT
@@ -398,13 +403,16 @@ async def admin_confirm_payment(call: CallbackQuery):
         await update_payment(pay_id, status="confirmed",
                              confirmed_at=datetime.now().isoformat())
 
-    await call.message.edit_caption(
-        call.message.caption + "\n\n✅ *TASDIQLANDI!*",
-        parse_mode="Markdown"
-    )
+    try:
+        await call.message.edit_caption(
+            (call.message.caption or "") + "\n\n✅ TASDIQLANDI!",
+            parse_mode=None
+        )
+    except Exception:
+        pass
     await call.answer("✅ Tasdiqlandi!")
 
-    # Foydalanuvchiga xabar
+    # Foydalanuvchiga xabar — HTML
     plan_name = PLAN_NAMES.get(plan_key, "")
     meals_list = ""
     if plan and plan.get("meals"):
@@ -413,22 +421,22 @@ async def admin_confirm_payment(call: CallbackQuery):
 
     await call.bot.send_message(
         uid,
-        f"🎉 *TABRIKLAYMIZ!*\n\n"
+        f"🎉 <b>TABRIKLAYMIZ!</b>\n\n"
         f"✅ To'lovingiz tasdiqlandi!\n"
         f"🔥 30-kunlik challendj boshlandi!\n\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"🥗 *SIZNING RATSIONINGIZ:*\n"
-        f"*{plan_name}*\n\n"
+        f"🥗 <b>SIZNING RATSIONINGIZ:</b>\n"
+        f"<b>{plan_name}</b>\n\n"
         f"📊 Kaloriya: {plan['cal_range'] if plan else '-'} kkal\n"
         f"💪 Oqsil: {plan['protein'] if plan else '-'}\n"
         f"🌾 Uglevod: {plan['carb'] if plan else '-'}\n"
         f"🫒 Yog': {plan['fat'] if plan else '-'}\n\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"🍽️ *Kunlik menyu:*\n{meals_list}\n"
+        f"🍽️ <b>Kunlik menyu:</b>\n{meals_list}\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"Pastdagi menyudan boshlang! 💪",
         reply_markup=main_menu_kb(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 @router.callback_query(F.data.startswith("admin_reject:"))
