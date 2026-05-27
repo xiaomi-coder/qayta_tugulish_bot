@@ -242,58 +242,7 @@ async def reg_height(msg: Message, state: FSMContext):
     )
     await state.set_state(Reg.gender)
 
-@router.callback_query(Reg.gender, F.data.startswith("gender:"))
-async def reg_gender(call: CallbackQuery, state: FSMContext):
-    gender = call.data.split(":")[1]
-    data = await state.get_data()
-    await state.clear()
-
-    w = data["weight"]
-    h = data["height"]
-    bmi = w / ((h/100)**2)
-    plan_key = get_plan_by_weight(w)
-    plan_name = PLAN_NAMES[plan_key]
-
-    bmi_text = ("🔵 Kam vazn" if bmi<18.5 else "🟢 Ideal" if bmi<25 else
-                "🟡 Ortiqcha" if bmi<30 else "🔴 Semiz")
-    gender_emoji = "👨" if gender == "erkak" else "👩"
-
-    # Foydalanuvchini saqlash
-    await update_user(call.from_user.id,
-        full_name=data["name"], phone=data["phone"],
-        weight=w, height=h, gender=gender, plan_key=plan_key,
-        registered_at=datetime.now().isoformat()
-    )
-
-    await call.message.edit_reply_markup()
-    await call.message.answer(
-        f"✅ *Ma'lumotlaringiz saqlandi!*\n\n"
-        f"{gender_emoji} {data['name']}\n"
-        f"📱 {data['phone']}\n"
-        f"⚖️ {w} kg | 📏 {h} sm\n"
-        f"📊 BMI: {bmi:.1f} — {bmi_text}\n\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"🥗 *Sizning ratsion planingiz:*\n"
-        f"*{plan_name}*\n\n"
-        f"_To'lovdan so'ng ratsion va challendj avtomatik ochiladi!_",
-        parse_mode="Markdown"
-    )
-
-    # Challenge haqida ma'lumot
-    await call.message.answer(
-        f"🔥 *30-KUNLIK CHALLENDJ NIMA?*\n\n"
-        f"📅 *30 kun davomida:*\n"
-        f"• Har kuni 4-5 ta ovqat retsepti\n"
-        f"• Har kuni 4 ta mashq video\n"
-        f"• Suv tracker (kunlik norma)\n"
-        f"• Avtomatik eslatmalar\n"
-        f"• Vazningizga mos ratsion\n\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"💰 *Narx: {PRICE_30_DAY:,} so'm*\n\n"
-        f"To'lovni amalga oshiring va boshlang! 👇",
-        reply_markup=challenge_info_kb(), parse_mode="Markdown"
-    )
-    await call.answer()
+# reg_gender eski handler olib tashlandi — reg_gender_v2 ishlatiladi (viloyat so'raydi)
 
 # ══════════════════════════════════
 # PAYMENT FLOW
@@ -309,12 +258,13 @@ async def cb_go_payment(call: CallbackQuery, state: FSMContext):
     )
     await state.set_state(PayState.method)
 
-@router.callback_query(PayState.method, F.data.startswith("pay_method:"))
+@router.callback_query(F.data.startswith("pay_method:"))
 async def cb_pay_method(call: CallbackQuery, state: FSMContext):
     method = call.data.split(":")[1]
     user = await get_user(call.from_user.id)
     plan_key = user.get("plan_key", "standard") if user else "standard"
 
+    await state.set_state(PayState.method)   # state yo'qolsa qayta tiklaymiz
     pay_id = await create_payment(call.from_user.id, PRICE_30_DAY, method, plan_key)
     await state.update_data(pay_id=pay_id, method=method)
 
@@ -372,13 +322,16 @@ async def cb_send_receipt(call: CallbackQuery, state: FSMContext):
 async def receipt_received(msg: Message, state: FSMContext):
     data = await state.get_data()
     pay_id = data.get("pay_id")
-    method = data.get("method", "")
+    method = data.get("method", "card")
     file_id = msg.photo[-1].file_id
     user = await get_user(msg.from_user.id)
 
-    if pay_id:
-        await update_payment(pay_id, receipt_file_id=file_id)
+    # pay_id yo'q bo'lsa (state yo'qolgan) — yangi to'lov yozuvi yaratamiz
+    if not pay_id:
+        p_key = user.get("plan_key", "standard") if user else "standard"
+        pay_id = await create_payment(msg.from_user.id, PRICE_30_DAY, method, p_key)
 
+    await update_payment(pay_id, receipt_file_id=file_id)
     await state.clear()
     await msg.answer(
         "✅ *Chek qabul qilindi!*\n\n"
@@ -424,8 +377,12 @@ async def admin_confirm_payment(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
         await call.answer("❌ Ruxsat yo'q!"); return
 
-    _, pay_id, uid = call.data.split(":")
-    pay_id, uid = int(pay_id), int(uid)
+    try:
+        parts = call.data.split(":")
+        uid = int(parts[2])
+        pay_id = int(parts[1]) if parts[1] not in ("None", "") else None
+    except (ValueError, IndexError):
+        await call.answer("❌ Noto'g'ri ma'lumot!"); return
 
     user = await get_user(uid)
     if not user:
@@ -437,8 +394,9 @@ async def admin_confirm_payment(call: CallbackQuery):
     # Premium berish + challenge boshlash
     await update_user(uid, is_premium=1, challenge_day=1,
                       challenge_started=datetime.now().isoformat())
-    await update_payment(pay_id, status="confirmed",
-                         confirmed_at=datetime.now().isoformat())
+    if pay_id:
+        await update_payment(pay_id, status="confirmed",
+                             confirmed_at=datetime.now().isoformat())
 
     await call.message.edit_caption(
         call.message.caption + "\n\n✅ *TASDIQLANDI!*",
@@ -478,10 +436,15 @@ async def admin_reject_payment(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
         await call.answer("❌ Ruxsat yo'q!"); return
 
-    _, pay_id, uid = call.data.split(":")
-    pay_id, uid = int(pay_id), int(uid)
+    try:
+        parts = call.data.split(":")
+        uid = int(parts[2])
+        pay_id = int(parts[1]) if parts[1] not in ("None", "") else None
+    except (ValueError, IndexError):
+        await call.answer("❌ Noto'g'ri ma'lumot!"); return
 
-    await update_payment(int(pay_id), status="rejected")
+    if pay_id:
+        await update_payment(pay_id, status="rejected")
     await call.message.edit_caption(
         call.message.caption + "\n\n❌ *RAD ETILDI*", parse_mode="Markdown"
     )
@@ -533,11 +496,12 @@ async def my_nutrition(msg: Message):
     user = await get_user(msg.from_user.id)
     weight = user.get("weight") or 100
 
-    from data.ration_data import get_ration_for_weight
+    from data.ration_data import get_ration_for_weight_gender
     from utils.card_generator import create_meal_card, create_water_card
     from aiogram.types import BufferedInputFile
 
-    ration = get_ration_for_weight(float(weight))
+    gender = user.get("gender", "erkak")
+    ration = get_ration_for_weight_gender(float(weight), gender)
     total_cal  = sum(m["cal"]     for m in ration["meals"])
     total_prot = sum(m["protein"] for m in ration["meals"])
     total_carb = sum(m["carbs"]   for m in ration["meals"])
@@ -1067,30 +1031,96 @@ async def admin_stats(call: CallbackQuery):
 @router.callback_query(F.data == "admin:give_premium")
 async def admin_give_premium(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
-    await call.message.edit_text("✅ Foydalanuvchi Telegram ID sini yozing:")
+    await call.message.edit_text(
+        "👑 *PREMIUM BERISH*\n\n"
+        "Telegram ID yoki telefon raqam yozing:\n\n"
+        "Misol:\n"
+        "• `123456789` — Telegram ID\n"
+        "• `+998901234567` — Telefon raqam\n"
+        "• `998901234567` — Telefon raqam (+ siz)",
+        parse_mode="Markdown"
+    )
     await state.set_state(AdminSt.premium_id)
     await call.answer()
 
 @router.message(AdminSt.premium_id)
 async def admin_give_premium_id(msg: Message, state: FSMContext):
-    try:
-        uid = int(msg.text.strip())
-    except ValueError:
-        await msg.answer("❌ Noto'g'ri ID"); return
-    user = await get_user(uid)
+    from database.db import search_user
+    inp = msg.text.strip()
+    user = None
+
+    # Telefon raqam yoki Telegram ID aniqlash
+    clean = inp.replace("+", "").replace(" ", "").replace("-", "")
+    if clean.isdigit() and len(clean) >= 9 and not (len(clean) <= 10 and int(clean) < 1_000_000_000):
+        # Telefon raqam (9 yoki ko'p raqamli, lekin Telegram ID emas)
+        results = await search_user(inp)
+        if not results:
+            results = await search_user(clean)
+        if not results:
+            results = await search_user(clean[-9:])  # oxirgi 9 raqam
+        if results:
+            if len(results) == 1:
+                user = results[0]
+            else:
+                # Bir nechatasi topildi — ro'yxat ko'rsat
+                lines = []
+                for u in results[:5]:
+                    lines.append(f"• *{u['full_name']}* — ID: `{u['telegram_id']}`\n"
+                                 f"  📱 {u.get('phone', '-')}")
+                await msg.answer(
+                    f"📋 *{len(results)} ta topildi:*\n\n" + "\n\n".join(lines) +
+                    "\n\nAniq Telegram ID ni yozing:",
+                    parse_mode="Markdown"
+                )
+                return
+    else:
+        # Telegram ID
+        try:
+            uid = int(clean)
+            user = await get_user(uid)
+        except ValueError:
+            # Ism bo'yicha qidirish
+            results = await search_user(inp)
+            if results:
+                if len(results) == 1:
+                    user = results[0]
+                else:
+                    lines = [f"• *{u['full_name']}* — ID: `{u['telegram_id']}`\n"
+                             f"  📱 {u.get('phone', '-')}" for u in results[:5]]
+                    await msg.answer(
+                        f"📋 *{len(results)} ta topildi:*\n\n" + "\n\n".join(lines) +
+                        "\n\nAniq Telegram ID ni yozing:", parse_mode="Markdown"
+                    )
+                    return
+
     if not user:
-        await msg.answer("❌ Foydalanuvchi topilmadi!"); await state.clear(); return
+        await msg.answer(
+            "❌ *Topilmadi!*\n\n"
+            "Telegram ID, telefon raqam yoki ism yozing.\n"
+            "Bekor qilish: /admin",
+            parse_mode="Markdown"
+        )
+        return
+
+    uid = user["telegram_id"]
     await update_user(uid, is_premium=1, challenge_day=1,
                       challenge_started=datetime.now().isoformat())
     await state.clear()
-    await msg.answer(f"✅ *{user['full_name']}* ga premium berildi!", parse_mode="Markdown",
-                     reply_markup=admin_kb())
+    await msg.answer(
+        f"✅ *{user['full_name']}* ga Premium berildi!\n\n"
+        f"📱 {user.get('phone', '-')} | TG ID: `{uid}`",
+        parse_mode="Markdown", reply_markup=admin_kb()
+    )
     try:
-        await msg.bot.send_message(uid,
+        await msg.bot.send_message(
+            uid,
             "🎉 *Tabriklaymiz! Sizga Premium berildi!*\n\n"
-            "30-kunlik challendj boshlandi! 🔥",
-            reply_markup=main_menu_kb(), parse_mode="Markdown")
-    except Exception: pass
+            "30-kunlik challendj boshlandi! 🔥\n\n"
+            "Pastdagi menyudan boshlang 👇",
+            reply_markup=main_menu_kb(), parse_mode="Markdown"
+        )
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "admin:upload_photo")
 async def admin_upload_photo(call: CallbackQuery, state: FSMContext):

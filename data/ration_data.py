@@ -89,11 +89,27 @@ RATION_110_150 = RATION_90_110   # placeholder
 RATION_150_PLUS = RATION_90_110  # placeholder
 
 
-# ── Vazniga qarab ratsion tanlash ─────────────────────────
-def get_ration_for_weight(weight: float) -> dict:
+# ── Erkaklar uchun ──────────────────────────────────────────
+def _men_ration(weight: float) -> dict:
     if weight <= 110:
         return RATION_90_110
     elif weight <= 150:
         return RATION_110_150
     else:
         return RATION_150_PLUS
+
+# ── Ayollar uchun (kelajakda RATION_WOMEN_90_110 qoshiladi) ─
+def _women_ration(weight: float) -> dict:
+    r = dict(_men_ration(weight))
+    r = {**r, "title": r["title"] + " (Ayol)"}
+    return r
+
+# ── Asosiy funksiyalar ───────────────────────────────────────
+def get_ration_for_weight(weight: float) -> dict:
+    return _men_ration(weight)
+
+def get_ration_for_weight_gender(weight: float, gender: str = "erkak") -> dict:
+    """Vazn va jinsga qarab ratsion tanlash"""
+    if gender == "ayol":
+        return _women_ration(weight)
+    return _men_ration(weight)
