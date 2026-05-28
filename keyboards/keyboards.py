@@ -216,6 +216,7 @@ def water_kb() -> InlineKeyboardMarkup:
 def admin_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="Kutayotgan tolovlar",    callback_data="admin:payments")
+    b.button(text="Ratsion rasmi yuklash",  callback_data="admin:ration_photo")
     b.button(text="Ovqat rasmi yuklash",    callback_data="admin:upload_photo")
     b.button(text="Mashq videosi yuklash",  callback_data="admin:upload_video")
     b.button(text="Salomlashuv videosi",    callback_data="admin:welcome_video")

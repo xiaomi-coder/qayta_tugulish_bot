@@ -112,10 +112,16 @@ async def init_db():
                 day INTEGER NOT NULL,
                 meal_index INTEGER NOT NULL,
                 photo_file_id TEXT NOT NULL,
+                caption TEXT DEFAULT '',
                 uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(day, meal_index)
             )
         """)
+        # Mavjud jadvalga caption ustunini qo'shish (migration)
+        try:
+            await db.execute("ALTER TABLE meal_photos ADD COLUMN caption TEXT DEFAULT ''")
+        except Exception:
+            pass
         # EXERCISE VIDEOS
         await db.execute("""
             CREATE TABLE IF NOT EXISTS exercise_videos (
@@ -123,10 +129,16 @@ async def init_db():
                 exercise_key TEXT NOT NULL,
                 video_file_id TEXT NOT NULL,
                 video_type TEXT DEFAULT 'video_note',
+                caption TEXT DEFAULT '',
                 uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(exercise_key)
             )
         """)
+        # Mavjud jadvalga caption ustunini qo'shish (migration)
+        try:
+            await db.execute("ALTER TABLE exercise_videos ADD COLUMN caption TEXT DEFAULT ''")
+        except Exception:
+            pass
         # BOT MEDIA (welcome video etc)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS bot_media (
@@ -337,29 +349,48 @@ async def get_logged_exercises(uid: int, day: int) -> list[int]:
             return [r[0] for r in await c.fetchall()]
 
 # ════════ MEAL PHOTOS ════════
-async def save_meal_photo(day: int, idx: int, fid: str) -> None:
+async def save_meal_photo(day: int, idx: int, fid: str, caption: str = "") -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO meal_photos (day,meal_index,photo_file_id) VALUES(?,?,?)",
-                         (day, idx, fid)); await db.commit()
+        await db.execute(
+            "INSERT OR REPLACE INTO meal_photos (day,meal_index,photo_file_id,caption) VALUES(?,?,?,?)",
+            (day, idx, fid, caption)
+        )
+        await db.commit()
 
-async def get_meal_photo(day: int, idx: int) -> str | None:
+async def get_meal_photo(day: int, idx: int) -> dict | None:
+    """Returns {'file_id': ..., 'caption': ...} or None"""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT photo_file_id FROM meal_photos WHERE day=? AND meal_index=?",
-                               (day, idx)) as c:
-            r = await c.fetchone(); return r[0] if r else None
+        async with db.execute(
+            "SELECT photo_file_id, caption FROM meal_photos WHERE day=? AND meal_index=?",
+            (day, idx)
+        ) as c:
+            r = await c.fetchone()
+            return {"file_id": r[0], "caption": r[1] or ""} if r else None
+
+# Ratsion ovqatlari uchun alohida (day=0 ishlatiladi)
+async def save_ration_photo(meal_idx: int, fid: str, caption: str = "") -> None:
+    await save_meal_photo(0, meal_idx, fid, caption)
+
+async def get_ration_photo(meal_idx: int) -> dict | None:
+    return await get_meal_photo(0, meal_idx)
 
 # ════════ EXERCISE VIDEOS ════════
-async def save_exercise_video(key: str, fid: str, vtype: str = "video_note") -> None:
+async def save_exercise_video(key: str, fid: str, vtype: str = "video_note", caption: str = "") -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO exercise_videos (exercise_key,video_file_id,video_type) VALUES(?,?,?)",
-                         (key, fid, vtype)); await db.commit()
+        await db.execute(
+            "INSERT OR REPLACE INTO exercise_videos (exercise_key,video_file_id,video_type,caption) VALUES(?,?,?,?)",
+            (key, fid, vtype, caption)
+        )
+        await db.commit()
 
 async def get_exercise_video(key: str) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT video_file_id,video_type FROM exercise_videos WHERE exercise_key=?",
-                               (key,)) as c:
+        async with db.execute(
+            "SELECT video_file_id, video_type, caption FROM exercise_videos WHERE exercise_key=?",
+            (key,)
+        ) as c:
             r = await c.fetchone()
-            return {"file_id": r[0], "type": r[1]} if r else None
+            return {"file_id": r[0], "type": r[1], "caption": r[2] or ""} if r else None
 
 # ════════ REGION STATS ════════
 async def get_users_by_region() -> dict:

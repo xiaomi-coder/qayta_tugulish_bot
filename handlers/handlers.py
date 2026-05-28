@@ -84,13 +84,18 @@ class AdminSt(StatesGroup):
     photo_day    = State()
     photo_meal   = State()
     photo_file   = State()
+    photo_caption = State()   # ovqat rasmi uchun yozuv
     video_set    = State()
     video_index  = State()
     video_type   = State()
     video_file   = State()
+    video_caption = State()   # mashq videosi uchun yozuv
     welcome_vid  = State()
     motiv_vid    = State()
     premium_id   = State()
+    ration_meal  = State()    # ratsion ovqat rasmi — qaysi ovqat
+    ration_file  = State()    # ratsion ovqat rasmi — faylni yuklash
+    ration_caption = State()  # ratsion ovqat rasmi — yozuv
     edit_plan_key = State()
     edit_plan_field = State()
     edit_plan_value = State()
@@ -531,21 +536,37 @@ async def my_nutrition(msg: Message):
         parse_mode="Markdown"
     )
 
-    # ── Har bir ovqat uchun kartochka ──
+    # ── Har bir ovqat uchun: real foto (admin yuklagan) yoki PNG kartochka ──
+    from database.db import get_ration_photo
     emoji_map = ["🌅", "🌞", "🍎", "🌙", "⭐"]
     for i, meal in enumerate(ration["meals"]):
+        em = emoji_map[i] if i < len(emoji_map) else "🍽️"
+        short_cap = (
+            f"{em} *{meal['name']}*\n"
+            f"⏰ {meal['time']}\n"
+            f"🔥 {meal['cal']} kkal  |  💪 {meal['protein']}g oqsil"
+        )
+        # Admin yuklagan real foto bormi?
+        ration_photo = await get_ration_photo(i)
+        if ration_photo:
+            file_cap = ration_photo.get("caption", "") or short_cap
+            try:
+                await msg.answer_photo(
+                    photo=ration_photo["file_id"],
+                    caption=file_cap[:1024],
+                    parse_mode="Markdown",
+                    protect_content=True
+                )
+                continue
+            except Exception:
+                pass
+        # Real foto yo'q — PNG kartochka yarat
         try:
             card_bytes = create_meal_card(meal, i, len(ration["meals"]), ration["title"])
             photo = BufferedInputFile(card_bytes, filename=f"meal_{i+1}.png")
-            em = emoji_map[i] if i < len(emoji_map) else "🍽️"
-            caption = (
-                f"{em} *{meal['name']}*\n"
-                f"⏰ {meal['time']}\n"
-                f"🔥 {meal['cal']} kkal  |  💪 {meal['protein']}g oqsil"
-            )
             await msg.answer_photo(
                 photo=photo,
-                caption=caption,
+                caption=short_cap,
                 parse_mode="Markdown",
                 protect_content=True
             )
@@ -728,13 +749,15 @@ async def cb_meal_detail(call: CallbackQuery):
     meal = meals[idx]
     logged = await get_logged_meals(call.from_user.id, day)
     is_logged = idx in logged
-    photo_id = await get_meal_photo(day, idx)
+    # Avval ratsion rasmi (day=0), keyin challenge rasmi
+    from database.db import get_ration_photo
+    photo_data = await get_ration_photo(idx) or await get_meal_photo(day, idx)
 
     recipe = meal.get("recipe") or meal.get("note", "")
     text = (
         f"{meal.get('icon', '🍽️')} *{meal['name']}* — {meal['time']}\n\n"
         f"🔥 {meal['cal']} kkal | 💪 {meal['protein']}g oqsil"
-        f" | 🥦 {meal.get('carbs', 0)}g uglevod | 🫙 {meal.get('fat', 0)}g yog\n\n"
+        f" | 🥦 {meal.get('carbs', 0)}g uglevod | 🫙 {meal.get('fat', 0)}g yog'\n\n"
         f"━━━━━━━━━━━━━━━━━\n🛒 *MAHSULOTLAR:*\n"
     )
     for f in meal["foods"]: text += f"• {f}\n"
@@ -743,15 +766,24 @@ async def cb_meal_detail(call: CallbackQuery):
     kb = meal_detail_kb(day, idx, is_logged)
 
     text_protected = wprotect(text)
-    if photo_id:
+    if photo_data:
+        photo_file_id = photo_data["file_id"]
+        photo_caption = photo_data.get("caption", "")
+        # Caption bor bo'lsa, rasmga qo'shib yubor
+        send_caption = photo_caption if photo_caption else text_protected
         try:
             await call.message.delete()
             await call.bot.send_photo(
-                call.message.chat.id, photo=photo_id,
-                caption=text_protected, reply_markup=kb,
-                parse_mode="Markdown",
-                protect_content=True
+                call.message.chat.id, photo=photo_file_id,
+                caption=send_caption[:1024], reply_markup=kb if not photo_caption else None,
+                parse_mode="Markdown", protect_content=True
             )
+            # Agar caption bor va asosiy text alohida kerak bo'lsa
+            if photo_caption:
+                await call.bot.send_message(
+                    call.message.chat.id, text_protected,
+                    reply_markup=kb, parse_mode="Markdown", protect_content=True
+                )
         except Exception:
             await call.message.answer(
                 text_protected, reply_markup=kb,
@@ -835,29 +867,35 @@ async def cb_ex_detail(call: CallbackQuery):
     kb = exercise_detail_kb(day, idx, is_logged)
 
     text_protected = wprotect(text)
-    wtext = wprotect(text)
     if video:
         try:
             await call.message.delete()
         except Exception:
             pass
+        admin_caption = video.get("caption", "")
         if video["type"] == "video_note":
             await call.bot.send_video_note(
                 call.message.chat.id,
                 video_note=video["file_id"],
                 protect_content=True
             )
+            # Caption + full text as separate message
+            full_text = text_protected
+            if admin_caption:
+                full_text = f"💬 _{admin_caption}_\n\n" + full_text
         else:
+            video_cap = admin_caption if admin_caption else f"{ex['icon']} *{ex['name']}* — Texnika"
             await call.bot.send_video(
                 call.message.chat.id,
                 video=video["file_id"],
-                caption=f"{ex['icon']} *{ex['name']}* — Texnika",
+                caption=video_cap,
                 parse_mode="Markdown",
                 protect_content=True
             )
+            full_text = text_protected
         await call.bot.send_message(
             call.message.chat.id,
-            text_protected,
+            full_text,
             reply_markup=kb,
             parse_mode="Markdown",
             protect_content=True
@@ -1028,6 +1066,66 @@ async def admin_motiv_vidnote_save(msg: Message, state: FSMContext):
         "✅ Motivatsiya videosi (aylana) saqlandi!\n\n"
         "Ertadan boshlab har kuni 07:00 da yuboriladi 🔥",
         reply_markup=admin_kb()
+    )
+
+@router.callback_query(F.data == "admin:ration_photo")
+async def admin_ration_photo(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    from data.ration_data import get_ration_for_weight_gender
+    ration = get_ration_for_weight_gender(100.0, "erkak")
+    lst = "\n".join([
+        f"{i+1}. {m.get('icon','🍽️')} {m['name']} ({m['time']})"
+        for i, m in enumerate(ration["meals"])
+    ])
+    await call.message.edit_text(
+        f"🖼️ *RATSION OVQAT RASMI*\n\n"
+        f"Qaysi ovqatga rasm yuklansin?\n\n{lst}",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.ration_meal)
+    await call.answer()
+
+@router.message(AdminSt.ration_meal)
+async def admin_ration_meal_select(msg: Message, state: FSMContext):
+    from data.ration_data import get_ration_for_weight_gender
+    ration = get_ration_for_weight_gender(100.0, "erkak")
+    meals = ration["meals"]
+    try:
+        idx = int(msg.text) - 1
+        assert 0 <= idx < len(meals)
+    except Exception:
+        await msg.answer(f"❌ 1-{len(meals)} kiriting:"); return
+    await state.update_data(ration_meal_idx=idx)
+    await msg.answer(
+        f"✅ *{meals[idx]['name']}* tanlandi\n\n"
+        f"📝 *Yozuv (caption) kiriting* — rasm pastida ko'rinadi.\n"
+        f"_(O'tkazib yuborish uchun '-' yuboring)_",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.ration_caption)
+
+@router.message(AdminSt.ration_caption)
+async def admin_ration_caption_input(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
+    caption = "" if (msg.text or "").strip() == "-" else (msg.text or "").strip()
+    await state.update_data(ration_caption=caption)
+    await msg.answer("📸 Endi rasmni yuboring:")
+    await state.set_state(AdminSt.ration_file)
+
+@router.message(AdminSt.ration_file, F.photo)
+async def admin_ration_photo_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
+    from database.db import save_ration_photo
+    data = await state.get_data()
+    idx = data.get("ration_meal_idx", 0)
+    caption = data.get("ration_caption", "")
+    await save_ration_photo(idx, msg.photo[-1].file_id, caption)
+    await state.clear()
+    tip = f"\n_Yozuv: {caption}_" if caption else ""
+    await msg.answer(
+        f"✅ Ratsion rasmi saqlandi! 🖼️{tip}\n\n"
+        f"_Foydalanuvchilar 'Mening Ratsionim' bo'limida ko'radi._",
+        reply_markup=admin_kb(), parse_mode="Markdown"
     )
 
 @router.callback_query(F.data == "admin:edit_nutrition")
@@ -1221,10 +1319,24 @@ async def admin_photo_meal(msg: Message, state: FSMContext):
 
 @router.message(AdminSt.photo_file, F.photo)
 async def admin_photo_file(msg: Message, state: FSMContext):
+    await state.update_data(photo_file_id=msg.photo[-1].file_id)
+    await msg.answer(
+        "✅ Rasm qabul qilindi! 📸\n\n"
+        "📝 *Yozuv (caption) kiriting* — rasm pastida ko'rinadi.\n"
+        "_(O'tkazib yuborish uchun '-' yuboring)_",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.photo_caption)
+
+@router.message(AdminSt.photo_caption)
+async def admin_photo_caption_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
     data = await state.get_data()
-    await save_meal_photo(data["photo_day"], data["photo_meal"], msg.photo[-1].file_id)
+    caption = "" if (msg.text or "").strip() == "-" else (msg.text or "").strip()
+    await save_meal_photo(data["photo_day"], data["photo_meal"], data["photo_file_id"], caption)
     await state.clear()
-    await msg.answer("✅ Rasm saqlandi!", reply_markup=admin_kb())
+    tip = f"\n_Yozuv: {caption}_" if caption else ""
+    await msg.answer(f"✅ Rasm saqlandi!{tip}", reply_markup=admin_kb(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "admin:upload_video")
 async def admin_upload_video(call: CallbackQuery, state: FSMContext):
@@ -1274,17 +1386,41 @@ async def admin_video_type(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminSt.video_file, F.video_note)
 async def admin_video_note(msg: Message, state: FSMContext):
-    data = await state.get_data()
-    await save_exercise_video(data.get("video_key",""), msg.video_note.file_id, "video_note")
-    await state.clear()
-    await msg.answer("✅ Aylana video saqlandi! ⭕", reply_markup=admin_kb())
+    await state.update_data(video_file_id=msg.video_note.file_id, video_file_type="video_note")
+    await msg.answer(
+        "✅ Aylana video qabul qilindi! ⭕\n\n"
+        "📝 *Yozuv (caption) kiriting* — foydalanuvchi videoni ko'rganda pastida ko'rinadi.\n"
+        "_(O'tkazib yuborish uchun '-' yuboring)_",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.video_caption)
 
 @router.message(AdminSt.video_file, F.video)
 async def admin_video_file(msg: Message, state: FSMContext):
+    await state.update_data(video_file_id=msg.video.file_id, video_file_type="video")
+    await msg.answer(
+        "✅ Video qabul qilindi! 📹\n\n"
+        "📝 *Yozuv (caption) kiriting* — foydalanuvchi videoni ko'rganda pastida ko'rinadi.\n"
+        "_(O'tkazib yuborish uchun '-' yuboring)_",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.video_caption)
+
+@router.message(AdminSt.video_caption)
+async def admin_video_caption_save(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS: return
     data = await state.get_data()
-    await save_exercise_video(data.get("video_key",""), msg.video.file_id, "video")
+    caption = "" if (msg.text or "").strip() == "-" else (msg.text or "").strip()
+    await save_exercise_video(
+        data.get("video_key", ""),
+        data.get("video_file_id", ""),
+        data.get("video_file_type", "video_note"),
+        caption
+    )
     await state.clear()
-    await msg.answer("✅ Video saqlandi! 📹", reply_markup=admin_kb())
+    tip = f"\n\n_Yozuv: {caption}_" if caption else ""
+    vtype = "⭕ Aylana" if data.get("video_file_type") == "video_note" else "📹 Oddiy"
+    await msg.answer(f"✅ {vtype} video saqlandi!{tip}", reply_markup=admin_kb(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "admin_main")
 async def cb_admin_main(call: CallbackQuery):
