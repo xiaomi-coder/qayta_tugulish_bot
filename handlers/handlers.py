@@ -983,9 +983,15 @@ async def admin_payments(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
         await call.answer("❌"); return
     payments = await get_pending_payments()
-    if not payments:
-        await call.answer("Kutayotgan to'lov yo'q ✅", show_alert=True); return
-    await call.answer(f"{len(payments)} ta kutayotgan to'lov")
+    pending_count = len(payments) if payments else 0
+    await call.message.edit_text(
+        f"💳 *TO'LOV BOSHQARUVI*\n\n"
+        f"⏳ Kutayotganlar: *{pending_count}* ta\n\n"
+        f"Qaysi bo'limni ko'rish?",
+        reply_markup=payments_menu_kb(),
+        parse_mode="Markdown"
+    )
+    await call.answer()
 
 @router.callback_query(F.data == "admin:broadcast")
 async def admin_broadcast_start(call: CallbackQuery, state: FSMContext):
@@ -1342,22 +1348,29 @@ async def admin_photo_caption_save(msg: Message, state: FSMContext):
 async def admin_upload_video(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
     await call.message.edit_text(
-        "🎬 Qaysi SET? (1/2/3)\n"
-        "1️⃣ Oyoq | 2️⃣ Ko'krak | 3️⃣ Orqa"
+        "🎬 *MASHQ VIDEOSI YUKLASH*\n\n"
+        "Qaysi kun uchun? (1-30 kiriting):",
+        parse_mode="Markdown"
     )
     await state.set_state(AdminSt.video_set); await call.answer()
 
 @router.message(AdminSt.video_set)
 async def admin_video_set(msg: Message, state: FSMContext):
+    # Endi kun raqami so'raymiz (1-30), SET emas
     from data.meals_data import EXERCISE_SETS
     try:
-        s = int(msg.text)-1; assert 0<=s<=2
+        day = int(msg.text); assert 1 <= day <= 30
     except Exception:
-        await msg.answer("❌ 1, 2 yoki 3 kiriting:"); return
-    await state.update_data(video_set=s)
-    exs = EXERCISE_SETS[s]
-    lst = "\n".join([f"{i+1}. {e['icon']} {e['name']}" for i,e in enumerate(exs)])
-    await msg.answer(f"Qaysi mashq?\n{lst}")
+        await msg.answer("❌ 1-30 orasida kun raqami kiriting:"); return
+    set_idx = (day - 1) % 3
+    set_names = ["🦵 Oyoq kuni", "💥 Ko'krak/Triseps kuni", "💪 Orqa/Biseps kuni"]
+    await state.update_data(video_set=set_idx, video_day=day)
+    exs = EXERCISE_SETS[set_idx]
+    lst = "\n".join([f"{i+1}. {e['icon']} {e['name']} — {e['sets']}" for i,e in enumerate(exs)])
+    await msg.answer(
+        f"📅 {day}-kun → {set_names[set_idx]}\n\n"
+        f"Qaysi mashq uchun video?\n\n{lst}"
+    )
     await state.set_state(AdminSt.video_index)
 
 @router.message(AdminSt.video_index)
@@ -1371,8 +1384,10 @@ async def admin_video_index(msg: Message, state: FSMContext):
         await msg.answer(f"❌ 1-{len(exs)} kiriting:"); return
     ex_key = f"set{data['video_set']}_ex{idx}"
     await state.update_data(video_index=idx, video_key=ex_key)
-    await msg.answer(f"✅ {exs[idx]['name']} | Video turini tanlang:",
-                     reply_markup=video_type_kb(ex_key))
+    await msg.answer(
+        f"✅ *{exs[idx]['name']}* tanlandi\n\nVideo turini tanlang:",
+        reply_markup=video_type_kb(ex_key), parse_mode="Markdown"
+    )
     await state.set_state(AdminSt.video_type)
 
 @router.callback_query(F.data.startswith("vtype:"))
