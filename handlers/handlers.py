@@ -704,7 +704,7 @@ async def water_main(msg: Message):
         f"✅ Ichildi: *{water}ml*\n"
         f"⏳ Qoldi: *{max(0,goal-water)}ml*\n\n"
         f"Qancha qo'shish kerak?",
-        reply_markup=water_kb(), parse_mode="Markdown"
+        reply_markup=water_kb(0), parse_mode="Markdown"
     )
 
 @router.message(F.text == "🏋️ Mashqlar")
@@ -735,6 +735,7 @@ async def stats_main(msg: Message):
         f"📊 {progress_bar(len(completed))}\n"
         f"💧 Bugungi suv: *{water}ml*\n"
         f"👑 Premium: *{'Ha ✅' if user.get('is_premium') else 'Yoq ❌'}*",
+        reply_markup=back_kb("main_menu_back"),
         parse_mode="Markdown"
     )
 
@@ -742,19 +743,25 @@ async def stats_main(msg: Message):
 async def profile_main(msg: Message):
     user = await get_user(msg.from_user.id)
     if not user: return
-    bmi = user["weight"]/((user["height"]/100)**2) if user.get("height") else 0
-    bt = ("🔵 Kam" if bmi<18.5 else "🟢 Ideal" if bmi<25 else "🟡 Ortiqcha" if bmi<30 else "🔴 Semiz")
-    gender_e = "👨 Erkak" if user.get("gender")=="erkak" else "👩 Ayol"
-    plan = PLAN_NAMES.get(user.get("plan_key","standard"), "")
+    bmi = user["weight"]/((user["height"]/100)**2) if user.get("height") and user.get("weight") else 0
+    bt = ("🔵 Kam" if bmi < 18.5 else "🟢 Ideal" if bmi < 25 else "🟡 Ortiqcha" if bmi < 30 else "🔴 Semiz") if bmi else "—"
+    gender_e = "👨 Erkak" if user.get("gender") == "erkak" else "👩 Ayol"
+    plan = PLAN_NAMES.get(user.get("plan_key", "standard"), "")
+    completed = await get_completed_days(msg.from_user.id)
+    water = await get_today_water(msg.from_user.id)
     await msg.answer(
         f"👤 *MENING PROFILIM*\n\n"
         f"📛 *{user['full_name']}*\n"
         f"{gender_e}\n"
-        f"📱 {user.get('phone','-')}\n"
-        f"📏 {user.get('height',0)} sm | ⚖️ {user.get('weight',0)} kg\n"
+        f"📱 {user.get('phone', '-')}\n"
+        f"📏 {user.get('height', 0)} sm | ⚖️ {user.get('weight', 0)} kg\n"
         f"📊 BMI: {bmi:.1f} — {bt}\n"
         f"🥗 Ratsion: {plan}\n"
-        f"👑 Premium: {'Ha ✅' if user.get('is_premium') else 'Yoq ❌'}",
+        f"👑 Premium: {'Ha ✅' if user.get('is_premium') else 'Yoq ❌'}\n\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"🏆 Challendj: *{len(completed)}/30* kun\n"
+        f"💧 Bugun suv: *{water}ml*",
+        reply_markup=back_kb("main_menu_back"),
         parse_mode="Markdown"
     )
 
@@ -937,19 +944,19 @@ async def cb_meal_toggle(call: CallbackQuery):
 async def cb_exercises(call: CallbackQuery):
     from database.db import get_day_videos
     day = int(call.data.split(":")[1])
-    exs = get_day_exercises(day)
     logged = await get_logged_exercises(call.from_user.id, day)
-
-    # Avval kun videolarini yuboramiz
     day_videos = await get_day_videos(day)
+    all_done = len(logged) > 0  # Hech bo'lmasa bitta bajarilgan bo'lsa "bajarildi"
+
     if day_videos:
+        # Videolar bor — avval xabar, keyin videolar, keyin tugma
         await call.message.edit_text(
             f"💪 *{day}-KUN MASHQLARI*\n\n"
-            f"📹 {len(day_videos)} ta video yuklanmoqda...",
+            f"📹 {len(day_videos)} ta mashq videosi:",
             parse_mode="Markdown"
         )
         for i, v in enumerate(day_videos, 1):
-            cap = v["caption"] or f"📹 {day}-kun | Video {i}"
+            cap = v["caption"] or f"📹 {day}-kun | Mashq {i}"
             try:
                 if v["type"] == "video_note":
                     await call.bot.send_video_note(
@@ -965,27 +972,56 @@ async def cb_exercises(call: CallbackQuery):
                         )
                 else:
                     await call.bot.send_video(
-                        call.message.chat.id,
-                        video=v["file_id"],
-                        caption=cap[:1024],
-                        parse_mode="Markdown",
-                        protect_content=True
+                        call.message.chat.id, video=v["file_id"],
+                        caption=cap[:1024], parse_mode="Markdown", protect_content=True
                     )
             except Exception as e:
                 logger.warning(f"Video yuborishda xato: {e}")
-        # Keyin mashq ro'yxatini yuboramiz
+        status = "✅ Mashqlar bajarildi!" if all_done else "⭕ Mashqlar bajarilmagan"
         await call.bot.send_message(
             call.message.chat.id,
-            f"💪 *{day}-KUN MASHQLARI*\n✅ = Bajarildi",
-            reply_markup=exercises_kb(day, exs, logged),
+            f"━━━━━━━━━━━━━━━━━\n{status}",
+            reply_markup=exercises_kb(day, all_done),
             parse_mode="Markdown"
         )
     else:
+        # Video yo'q — oddiy sahifa
+        status = "✅ Bajarildi!" if all_done else "⭕ Hali bajarilmagan"
         await call.message.edit_text(
-            f"💪 *{day}-KUN MASHQLARI*\n✅ = Bajarildi",
-            reply_markup=exercises_kb(day, exs, logged), parse_mode="Markdown"
+            f"💪 *{day}-KUN MASHQLARI*\n\n"
+            f"📹 Bu kun uchun mashq videolari hali qo'shilmagan.\n"
+            f"Admin tez orada yuklaydi! 💪\n\n"
+            f"━━━━━━━━━━━━━━━━━\n{status}",
+            reply_markup=exercises_kb(day, all_done), parse_mode="Markdown"
         )
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("exall_toggle:"))
+async def cb_exall_toggle(call: CallbackQuery):
+    """Barcha mashqlarni birdan bajarildi/bekor"""
+    _, day, val = call.data.split(":")
+    day, val = int(day), int(val)
+    exs = get_day_exercises(day)
+    if val == 1:
+        for i in range(len(exs)):
+            await log_exercise(call.from_user.id, day, i)
+        await call.answer("✅ Mashqlar bajarildi deb belgilandi!")
+        all_done = True
+    else:
+        # Barcha loglarni bekor qilish
+        for i in range(len(exs)):
+            logged = await get_logged_exercises(call.from_user.id, day)
+            if i in logged:
+                await log_exercise(call.from_user.id, day, i)  # toggle
+        await call.answer("↩️ Bekor qilindi")
+        all_done = False
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=exercises_kb(day, all_done)
+        )
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("ex_detail:"))
 async def cb_ex_detail(call: CallbackQuery):
@@ -1050,20 +1086,43 @@ async def cb_water(call: CallbackQuery):
     goal = user.get("water_goal", 3000) if user else 3000
     total = await add_water(call.from_user.id, amount)
     await call.answer(f"💧 +{amount}ml!")
+    # day ni state dan emas — message reply_markup dan olamiz
+    # Orqaga tugma uchun day=0 (asosiy menyu)
     await call.message.edit_text(
         f"💧 *SUV TRACKER*\n\n{wbar(total,goal)}\n\n"
         f"✅ *{total}ml* / {goal}ml\n"
         f"{'🎉 Maqsad bajarildi!' if total>=goal else f'Qoldi: {goal-total}ml'}",
-        reply_markup=water_kb(), parse_mode="Markdown"
+        reply_markup=water_kb(0), parse_mode="Markdown"
     )
 
 @router.callback_query(F.data.startswith("water_day:"))
 async def cb_water_day(call: CallbackQuery):
+    day = int(call.data.split(":")[1])
+    user = await get_user(call.from_user.id)
+    goal = user.get("water_goal", 3000) if user else 3000
     water = await get_today_water(call.from_user.id)
     await call.message.edit_text(
-        f"💧 *SUV TRACKER*\n\n{wbar(water,3000)}\n\n"
+        f"💧 *SUV TRACKER*\n\n{wbar(water, goal)}\n\n"
+        f"✅ *{water}ml* / {goal}ml\n"
+        f"{'🎉 Maqsad bajarildi!' if water >= goal else f'Qoldi: {goal-water}ml'}\n\n"
         f"Qo'shish uchun tugmani bosing:",
-        reply_markup=water_kb(), parse_mode="Markdown"
+        reply_markup=water_kb(day), parse_mode="Markdown"
+    )
+    await call.answer()
+
+@router.callback_query(F.data == "main_menu_back")
+async def cb_main_menu_back(call: CallbackQuery):
+    """Suv trackerdan asosiy menyuga qaytish"""
+    user = await get_user(call.from_user.id)
+    goal = user.get("water_goal", 3000) if user else 3000
+    water = await get_today_water(call.from_user.id)
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await call.message.answer(
+        f"💧 Bugun: *{water}ml* / {goal}ml\n\nAsosiy menyu:",
+        reply_markup=main_menu_kb(), parse_mode="Markdown"
     )
     await call.answer()
 

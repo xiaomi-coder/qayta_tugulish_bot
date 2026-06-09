@@ -193,31 +193,36 @@ def meal_detail_kb(day: int, idx: int, logged: bool) -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
-def exercises_kb(day: int, exs: list, logged: list) -> InlineKeyboardMarkup:
+def exercises_kb(day: int, all_done: bool = False) -> InlineKeyboardMarkup:
+    """Mashqlar sahifasi: video ko'ring + bajarildi tugmasi"""
     b = InlineKeyboardBuilder()
-    for i, ex in enumerate(exs):
-        done = "✅ " if i in logged else ""
-        b.button(text=f"{done}{ex['icon']} {ex['name']} — {ex['sets']}",
-                 callback_data=f"ex_detail:{day}:{i}")
-    b.button(text="Orqaga", callback_data=f"day:{day}")
+    if all_done:
+        b.button(text="↩️ Bekor qilish", callback_data=f"exall_toggle:{day}:0")
+    else:
+        b.button(text="✅ Mashqlarni bajardim!", callback_data=f"exall_toggle:{day}:1")
+    b.button(text="◀️ Orqaga", callback_data=f"day:{day}")
     b.adjust(1)
     return b.as_markup()
 
 def exercise_detail_kb(day: int, idx: int, logged: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="Bekor" if logged else "Bajarildi!",
+    b.button(text="↩️ Bekor" if logged else "✅ Bajarildi!",
              callback_data=f"ex_toggle:{day}:{idx}")
-    b.button(text="Mashqlar", callback_data=f"exercises:{day}")
+    b.button(text="◀️ Mashqlar", callback_data=f"exercises:{day}")
     b.adjust(1)
     return b.as_markup()
 
-def water_kb() -> InlineKeyboardMarkup:
+def water_kb(day: int = 0) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="+250ml", callback_data="water:250")
     b.button(text="+500ml", callback_data="water:500")
     b.button(text="+750ml", callback_data="water:750")
     b.button(text="+1L",    callback_data="water:1000")
-    b.adjust(2, 2)
+    if day:
+        b.button(text="◀️ Orqaga", callback_data=f"day:{day}")
+    else:
+        b.button(text="◀️ Orqaga", callback_data="main_menu_back")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 # ════ ADMIN ════
