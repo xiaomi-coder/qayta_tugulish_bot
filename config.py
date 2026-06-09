@@ -24,6 +24,9 @@ PRICE_3_MONTH  = int(os.getenv("PRICE_3_MONTH",  "349000"))
 # ── Kanal
 CHANNEL = os.getenv("CHANNEL", "@QaytaTugulishBot")
 
+# ── Obuna shart bo'lgan kanal (bo'sh qolsa tekshirilmaydi)
+MUST_JOIN_CHANNEL = os.getenv("MUST_JOIN_CHANNEL", "@farruxrajabov94")
+
 # ── Vazn bo'yicha ratsion ranji
 def get_plan_by_weight(weight: float) -> str:
     if weight < 100:

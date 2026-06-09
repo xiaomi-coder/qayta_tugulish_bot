@@ -7,13 +7,42 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 
 from config import (ADMIN_IDS, PAYMENT_CARD, PAYMENT_PAYME, PAYMENT_CLICK,
-                    PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES)
+                    PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES, MUST_JOIN_CHANNEL)
 from database.db import *
 from keyboards.keyboards import *
 from data.meals_data import get_day_meals, get_day_exercises, get_day_tip, get_motivation
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+# ══════════════════════════════════
+# OBUNA TEKSHIRISH
+# ══════════════════════════════════
+async def is_subscribed(bot, user_id: int) -> bool:
+    """Foydalanuvchi kanalga obuna bo'lganini tekshiradi."""
+    if not MUST_JOIN_CHANNEL:
+        return True  # Kanal sozlanmagan — tekshirmaslik
+    try:
+        member = await bot.get_chat_member(MUST_JOIN_CHANNEL, user_id)
+        return member.status not in ("left", "kicked")
+    except Exception:
+        return True  # Xato bo'lsa bloklamamaymiz
+
+
+async def ask_to_subscribe(msg_or_call):
+    """Obuna talab xabarini yuboradi."""
+    text = (
+        "✅ *Rahmat! Ma'lumotlaringiz muvaffaqiyatli saqlandi.*\n\n"
+        f"Mobil ilovamiz va marafon haqida barcha yangiliklarni birinchilardan bo'lib "
+        f"bilish uchun bizning *{MUST_JOIN_CHANNEL}* kanaliga obuna bo'ling va "
+        f"*A'zo bo'ldim* tugmasini bosing! 👇"
+    )
+    kb = must_join_kb(MUST_JOIN_CHANNEL)
+    if hasattr(msg_or_call, "answer"):
+        await msg_or_call.answer(text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await msg_or_call.message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 
 # ═══════════════════════════
@@ -121,6 +150,12 @@ def progress_bar(done, total=30):
 @router.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
+
+    # Kanalga obuna tekshiruvi
+    if not await is_subscribed(msg.bot, msg.from_user.id):
+        await ask_to_subscribe(msg)
+        return
+
     user = await get_user(msg.from_user.id)
 
     if user and user.get("is_premium"):
@@ -177,6 +212,70 @@ async def cmd_start(msg: Message, state: FSMContext):
 # ══════════════════════════════════
 # REGISTRATION FLOW
 # ══════════════════════════════════
+@router.callback_query(F.data == "check_subscription")
+async def cb_check_subscription(call: CallbackQuery, state: FSMContext):
+    """'✅ A'zo bo'ldim' tugmasi — obunani qayta tekshirish"""
+    subscribed = await is_subscribed(call.bot, call.from_user.id)
+    if not subscribed:
+        await call.answer(
+            f"❌ Siz hali {MUST_JOIN_CHANNEL} kanaliga obuna bo'lmagansiz!\n"
+            "Obuna bo'ling va qayta bosing.",
+            show_alert=True
+        )
+        return
+
+    # Obuna tasdiqlandi — start jarayonini davom ettirish
+    await call.answer("✅ Obuna tasdiqlandi!")
+    try:
+        await call.message.edit_reply_markup()
+    except Exception:
+        pass
+
+    user = await get_user(call.from_user.id)
+
+    if user and user.get("is_premium"):
+        await call.message.answer(
+            f"{greeting()}, *{user['full_name']}*! 👋\n\n"
+            f"🔥 *QAYTA TUG'ILISH*\n\n"
+            f"_{get_motivation(user.get('challenge_day', 1))}_",
+            reply_markup=main_menu_kb(), parse_mode="Markdown"
+        )
+        return
+
+    if user and user.get("registered_at") and not user.get("is_premium"):
+        await call.message.answer(
+            f"Salom, *{user['full_name']}*! 👋\n\n"
+            f"To'lovni amalga oshiring va 30-kunlik challendj boshlang! 💪",
+            reply_markup=payment_method_kb(), parse_mode="Markdown"
+        )
+        await state.set_state(PayState.method)
+        return
+
+    # Yangi foydalanuvchi — welcome xabar
+    await create_user(call.from_user.id, call.from_user.username or "", call.from_user.full_name or "")
+    media = await get_bot_media("welcome_video")
+    welcome_text = (
+        "🔥 *QAYTA TUG'ILISH*\n"
+        "_Professional GYM Trener — Farrux Rajabov_\n\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "💪 *30-KUNLIK CHALLENDJ*\n\n"
+        "✅ Har kuni ovqat ratsioni\n"
+        "✅ Har kuni mashq dasturi\n"
+        "✅ Suv tracker\n"
+        "✅ Kunlik eslatmalar\n"
+        "✅ Vazningizga mos ratsion\n\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "🚀 Boshlashga tayyormisiz?"
+    )
+    if media:
+        await call.message.answer_video(
+            video=media["file_id"], caption=welcome_text,
+            reply_markup=start_kb(), parse_mode="Markdown"
+        )
+    else:
+        await call.message.answer(welcome_text, reply_markup=start_kb(), parse_mode="Markdown")
+
+
 @router.callback_query(F.data == "start_reg")
 async def cb_start_reg(call: CallbackQuery, state: FSMContext):
     await call.message.edit_reply_markup()

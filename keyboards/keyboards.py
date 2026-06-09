@@ -90,6 +90,14 @@ def export_kb() -> InlineKeyboardMarkup:
     b.adjust(2)
     return b.as_markup()
 
+# ════ SUBSCRIPTION CHECK ════
+def must_join_kb(channel: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="📢 Kanalga o'tish", url=f"https://t.me/{channel.lstrip('@')}")
+    b.button(text="✅ A'zo bo'ldim", callback_data="check_subscription")
+    b.adjust(1)
+    return b.as_markup()
+
 # ════ START ════
 def start_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
