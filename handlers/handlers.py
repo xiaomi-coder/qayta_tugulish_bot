@@ -835,13 +835,56 @@ async def cb_meal_toggle(call: CallbackQuery):
 # ══════════════════════════════════
 @router.callback_query(F.data.startswith("exercises:"))
 async def cb_exercises(call: CallbackQuery):
+    from database.db import get_day_videos
     day = int(call.data.split(":")[1])
     exs = get_day_exercises(day)
     logged = await get_logged_exercises(call.from_user.id, day)
-    await call.message.edit_text(
-        f"💪 *{day}-KUN MASHQLARI*\n✅ = Bajarildi",
-        reply_markup=exercises_kb(day, exs, logged), parse_mode="Markdown"
-    )
+
+    # Avval kun videolarini yuboramiz
+    day_videos = await get_day_videos(day)
+    if day_videos:
+        await call.message.edit_text(
+            f"💪 *{day}-KUN MASHQLARI*\n\n"
+            f"📹 {len(day_videos)} ta video yuklanmoqda...",
+            parse_mode="Markdown"
+        )
+        for i, v in enumerate(day_videos, 1):
+            cap = v["caption"] or f"📹 {day}-kun | Video {i}"
+            try:
+                if v["type"] == "video_note":
+                    await call.bot.send_video_note(
+                        call.message.chat.id,
+                        video_note=v["file_id"],
+                        protect_content=True
+                    )
+                    if v["caption"]:
+                        await call.bot.send_message(
+                            call.message.chat.id,
+                            f"💬 _{v['caption']}_",
+                            parse_mode="Markdown", protect_content=True
+                        )
+                else:
+                    await call.bot.send_video(
+                        call.message.chat.id,
+                        video=v["file_id"],
+                        caption=cap[:1024],
+                        parse_mode="Markdown",
+                        protect_content=True
+                    )
+            except Exception as e:
+                logger.warning(f"Video yuborishda xato: {e}")
+        # Keyin mashq ro'yxatini yuboramiz
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"💪 *{day}-KUN MASHQLARI*\n✅ = Bajarildi",
+            reply_markup=exercises_kb(day, exs, logged),
+            parse_mode="Markdown"
+        )
+    else:
+        await call.message.edit_text(
+            f"💪 *{day}-KUN MASHQLARI*\n✅ = Bajarildi",
+            reply_markup=exercises_kb(day, exs, logged), parse_mode="Markdown"
+        )
     await call.answer()
 
 @router.callback_query(F.data.startswith("ex_detail:"))
@@ -852,8 +895,6 @@ async def cb_ex_detail(call: CallbackQuery):
     ex = exs[idx]
     logged = await get_logged_exercises(call.from_user.id, day)
     is_logged = idx in logged
-    ex_key = f"set{(day-1)%3}_ex{idx}"
-    video = await get_exercise_video(ex_key)
 
     text = (
         f"{ex['icon']} *{ex['name']}*\n\n"
@@ -865,52 +906,17 @@ async def cb_ex_detail(call: CallbackQuery):
         f"{'✅ BAJARILDI!' if is_logged else '⭕ Bajarilmagan'}"
     )
     kb = exercise_detail_kb(day, idx, is_logged)
-
     text_protected = wprotect(text)
-    if video:
-        try:
-            await call.message.delete()
-        except Exception:
-            pass
-        admin_caption = video.get("caption", "")
-        if video["type"] == "video_note":
-            await call.bot.send_video_note(
-                call.message.chat.id,
-                video_note=video["file_id"],
-                protect_content=True
-            )
-            # Caption + full text as separate message
-            full_text = text_protected
-            if admin_caption:
-                full_text = f"💬 _{admin_caption}_\n\n" + full_text
-        else:
-            video_cap = admin_caption if admin_caption else f"{ex['icon']} *{ex['name']}* — Texnika"
-            await call.bot.send_video(
-                call.message.chat.id,
-                video=video["file_id"],
-                caption=video_cap,
-                parse_mode="Markdown",
-                protect_content=True
-            )
-            full_text = text_protected
-        await call.bot.send_message(
-            call.message.chat.id,
-            full_text,
-            reply_markup=kb,
-            parse_mode="Markdown",
-            protect_content=True
+
+    try:
+        await call.message.edit_text(
+            text_protected, reply_markup=kb, parse_mode="Markdown"
         )
-    else:
-        try:
-            await call.message.edit_text(
-                text_protected, reply_markup=kb, parse_mode="Markdown"
-            )
-        except Exception:
-            await call.message.answer(
-                text_protected, reply_markup=kb,
-                parse_mode="Markdown",
-                protect_content=True
-            )
+    except Exception:
+        await call.message.answer(
+            text_protected, reply_markup=kb,
+            parse_mode="Markdown", protect_content=True
+        )
     await call.answer()  # ex_detail end
 
 @router.callback_query(F.data.startswith("ex_toggle:"))
@@ -1349,54 +1355,50 @@ async def admin_upload_video(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
     await call.message.edit_text(
         "🎬 *MASHQ VIDEOSI YUKLASH*\n\n"
-        "Qaysi kun uchun? (1-30 kiriting):",
+        "Qaysi kun uchun video? (1-30):",
         parse_mode="Markdown"
     )
     await state.set_state(AdminSt.video_set); await call.answer()
 
 @router.message(AdminSt.video_set)
-async def admin_video_set(msg: Message, state: FSMContext):
-    # Endi kun raqami so'raymiz (1-30), SET emas
-    from data.meals_data import EXERCISE_SETS
+async def admin_video_day_select(msg: Message, state: FSMContext):
+    """Faqat kun raqamini tanlaymiz — boshqa savol yo'q"""
     try:
         day = int(msg.text); assert 1 <= day <= 30
     except Exception:
         await msg.answer("❌ 1-30 orasida kun raqami kiriting:"); return
-    set_idx = (day - 1) % 3
-    set_names = ["🦵 Oyoq kuni", "💥 Ko'krak/Triseps kuni", "💪 Orqa/Biseps kuni"]
-    await state.update_data(video_set=set_idx, video_day=day)
-    exs = EXERCISE_SETS[set_idx]
-    lst = "\n".join([f"{i+1}. {e['icon']} {e['name']} — {e['sets']}" for i,e in enumerate(exs)])
+    from database.db import get_day_videos
+    existing = await get_day_videos(day)
+    await state.update_data(video_day=day)
+    ex_count = len(existing)
+    info = f"_(Bu kun uchun allaqachon {ex_count} ta video bor)_\n\n" if ex_count else ""
     await msg.answer(
-        f"📅 {day}-kun → {set_names[set_idx]}\n\n"
-        f"Qaysi mashq uchun video?\n\n{lst}"
-    )
-    await state.set_state(AdminSt.video_index)
-
-@router.message(AdminSt.video_index)
-async def admin_video_index(msg: Message, state: FSMContext):
-    from data.meals_data import EXERCISE_SETS
-    data = await state.get_data()
-    exs = EXERCISE_SETS[data["video_set"]]
-    try:
-        idx = int(msg.text)-1; assert 0<=idx<len(exs)
-    except Exception:
-        await msg.answer(f"❌ 1-{len(exs)} kiriting:"); return
-    ex_key = f"set{data['video_set']}_ex{idx}"
-    await state.update_data(video_index=idx, video_key=ex_key)
-    await msg.answer(
-        f"✅ *{exs[idx]['name']}* tanlandi\n\nVideo turini tanlang:",
-        reply_markup=video_type_kb(ex_key), parse_mode="Markdown"
+        f"📅 *{day}-kun* tanlandi\n\n{info}"
+        f"Video turini tanlang:",
+        reply_markup=video_type_kb(f"day{day}"),
+        parse_mode="Markdown"
     )
     await state.set_state(AdminSt.video_type)
+
+# video_index state endi ishlatilmaydi — o'tkazib yuboramiz
+@router.message(AdminSt.video_index)
+async def admin_video_index_skip(msg: Message, state: FSMContext):
+    pass  # legacy, endi ishlatilmaydi
 
 @router.callback_query(F.data.startswith("vtype:"))
 async def admin_video_type(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
-    _, vtype, ex_key = call.data.split(":", 2)
-    await state.update_data(video_type=vtype, video_key=ex_key)
-    t = "⭕ Aylana video" if vtype=="video_note" else "📹 Oddiy video"
-    await call.message.edit_text(f"✅ {t} tanlandi\n\n📹 Videoni yuboring:")
+    parts = call.data.split(":", 2)
+    vtype = parts[1]
+    data = await state.get_data()
+    day = data.get("video_day", 1)
+    await state.update_data(video_type=vtype, video_day=day)
+    t = "⭕ Aylana video" if vtype == "video_note" else "📹 Oddiy video"
+    await call.message.edit_text(
+        f"✅ {t} tanlandi\n\n"
+        f"📹 *{day}-kun videosini yuboring:*",
+        parse_mode="Markdown"
+    )
     await state.set_state(AdminSt.video_file); await call.answer()
 
 @router.message(AdminSt.video_file, F.video_note)
@@ -1424,18 +1426,25 @@ async def admin_video_file(msg: Message, state: FSMContext):
 @router.message(AdminSt.video_caption)
 async def admin_video_caption_save(msg: Message, state: FSMContext):
     if msg.from_user.id not in ADMIN_IDS: return
+    from database.db import save_day_video
     data = await state.get_data()
     caption = "" if (msg.text or "").strip() == "-" else (msg.text or "").strip()
-    await save_exercise_video(
-        data.get("video_key", ""),
+    day = data.get("video_day", 1)
+    total = await save_day_video(
+        day,
         data.get("video_file_id", ""),
         data.get("video_file_type", "video_note"),
         caption
     )
     await state.clear()
-    tip = f"\n\n_Yozuv: {caption}_" if caption else ""
+    tip = f"\n_Izoh: {caption}_" if caption else ""
     vtype = "⭕ Aylana" if data.get("video_file_type") == "video_note" else "📹 Oddiy"
-    await msg.answer(f"✅ {vtype} video saqlandi!{tip}", reply_markup=admin_kb(), parse_mode="Markdown")
+    await msg.answer(
+        f"✅ {vtype} video saqlandi!\n"
+        f"📅 {day}-kun uchun jami: *{total}* ta video{tip}\n\n"
+        f"_Yana shu kun uchun video yuklash uchun 'Mashq videosi yuklash' tugmasini bosing._",
+        reply_markup=admin_kb(), parse_mode="Markdown"
+    )
 
 @router.callback_query(F.data == "admin_main")
 async def cb_admin_main(call: CallbackQuery):

@@ -392,6 +392,49 @@ async def get_exercise_video(key: str) -> dict | None:
             r = await c.fetchone()
             return {"file_id": r[0], "type": r[1], "caption": r[2] or ""} if r else None
 
+# ════════ KUN ASOSIDA VIDEO (har bir kun uchun ko'p video) ════════
+async def save_day_video(day: int, fid: str, vtype: str = "video_note", caption: str = "") -> int:
+    """Kun uchun video saqlaydi. Bir kunga ko'p video bo'lishi mumkin. Qaytaradi: jami video soni."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key LIKE ?",
+            (f"day{day}_v%",)
+        ) as c:
+            count = (await c.fetchone())[0]
+        key = f"day{day}_v{count}"
+        await db.execute(
+            "INSERT OR REPLACE INTO exercise_videos (exercise_key,video_file_id,video_type,caption) VALUES(?,?,?,?)",
+            (key, fid, vtype, caption)
+        )
+        await db.commit()
+        return count + 1
+
+async def get_day_videos(day: int) -> list:
+    """Kun uchun barcha videolarni tartibida qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT video_file_id, video_type, caption FROM exercise_videos "
+            "WHERE exercise_key LIKE ? ORDER BY exercise_key",
+            (f"day{day}_v%",)
+        ) as c:
+            rows = await c.fetchall()
+            return [{"file_id": r[0], "type": r[1], "caption": r[2] or ""} for r in rows]
+
+async def delete_day_videos(day: int) -> int:
+    """Kunning barcha videolarini o'chiradi. Qaytaradi: o'chirilgan soni."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key LIKE ?",
+            (f"day{day}_v%",)
+        ) as c:
+            count = (await c.fetchone())[0]
+        await db.execute(
+            "DELETE FROM exercise_videos WHERE exercise_key LIKE ?",
+            (f"day{day}_v%",)
+        )
+        await db.commit()
+        return count
+
 # ════════ REGION STATS ════════
 async def get_users_by_region() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
