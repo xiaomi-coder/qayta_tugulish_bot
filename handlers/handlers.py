@@ -33,10 +33,11 @@ async def is_subscribed(bot, user_id: int) -> bool:
 async def ask_to_subscribe(msg_or_call):
     """Obuna talab xabarini yuboradi."""
     text = (
-        "✅ *Rahmat! Ma'lumotlaringiz muvaffaqiyatli saqlandi.*\n\n"
-        f"Mobil ilovamiz va marafon haqida barcha yangiliklarni birinchilardan bo'lib "
-        f"bilish uchun bizning *{MUST_JOIN_CHANNEL}* kanaliga obuna bo'ling va "
-        f"*A'zo bo'ldim* tugmasini bosing! 👇"
+        "📢 *Bizni kuzatib boring!*\n\n"
+        f"Marafondan tashqari ko'plab foydali ma'lumotlar, "
+        f"motivatsiya va yangiliklar uchun kanalimizga obuna bo'ling!\n\n"
+        f"👉 {MUST_JOIN_CHANNEL}\n\n"
+        f"Obuna bo'lgach *\"A'zo bo'ldim\"* tugmasini bosing 👇"
     )
     kb = must_join_kb(MUST_JOIN_CHANNEL)
     if hasattr(msg_or_call, "answer"):
