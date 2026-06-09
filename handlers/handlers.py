@@ -1551,59 +1551,97 @@ async def admin_video_type(call: CallbackQuery, state: FSMContext):
     vtype = parts[1]
     data = await state.get_data()
     day = data.get("video_day", 1)
-    await state.update_data(video_type=vtype, video_day=day)
+    await state.update_data(video_type=vtype, video_day=day, next_caption="")
     t = "⭕ Aylana video" if vtype == "video_note" else "📹 Oddiy video"
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    done_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Tugallash", callback_data="video_upload_done")]
+    ])
     await call.message.edit_text(
-        f"✅ {t} tanlandi\n\n"
-        f"📹 *{day}-kun videosini yuboring:*",
-        parse_mode="Markdown"
+        f"✅ {t} tanlandi — *{day}-kun*\n\n"
+        f"📹 Videolarni ketma-ket yuboring.\n"
+        f"_Izoh qo'shmoqchi bo'lsangiz — video yuborishdan OLDIN matn yozing._\n\n"
+        f"Hammasi tugagach 👇",
+        reply_markup=done_kb, parse_mode="Markdown"
     )
     await state.set_state(AdminSt.video_file); await call.answer()
 
-@router.message(AdminSt.video_file, F.video_note)
-async def admin_video_note(msg: Message, state: FSMContext):
-    await state.update_data(video_file_id=msg.video_note.file_id, video_file_type="video_note")
+
+async def _save_and_confirm(msg, state, file_id, vtype):
+    """Video saqlash va tasdiqlash — ichki yordamchi"""
+    from database.db import save_day_video
+    data = await state.get_data()
+    day = data.get("video_day", 1)
+    caption = data.get("next_caption", "")
+    await state.update_data(next_caption="")  # caption ishlatildi, tozala
+    total = await save_day_video(day, file_id, vtype, caption)
+    tip = f" | _{caption}_" if caption else ""
+    t = "⭕" if vtype == "video_note" else "📹"
     await msg.answer(
-        "✅ Aylana video qabul qilindi! ⭕\n\n"
-        "📝 *Yozuv (caption) kiriting* — foydalanuvchi videoni ko'rganda pastida ko'rinadi.\n"
-        "_(O'tkazib yuborish uchun '-' yuboring)_",
+        f"{t} Video {total} saqlandi{tip}\n"
+        f"_Keyingi videoni yuboring yoki 'Tugallash' bosing._",
         parse_mode="Markdown"
     )
-    await state.set_state(AdminSt.video_caption)
+
+
+@router.message(AdminSt.video_file, F.video_note)
+async def admin_video_note(msg: Message, state: FSMContext):
+    await _save_and_confirm(msg, state, msg.video_note.file_id, "video_note")
+
 
 @router.message(AdminSt.video_file, F.video)
 async def admin_video_file(msg: Message, state: FSMContext):
-    await state.update_data(video_file_id=msg.video.file_id, video_file_type="video")
+    await _save_and_confirm(msg, state, msg.video.file_id, "video")
+
+
+@router.message(AdminSt.video_file, F.text)
+async def admin_video_caption_next(msg: Message, state: FSMContext):
+    """Video yuborishdan oldin matn = keyingi video uchun izoh"""
+    if msg.from_user.id not in ADMIN_IDS: return
+    text = (msg.text or "").strip()
+    if text.lower() in ("done", "tugallash", "✅ tugallash"):
+        await _finish_video_upload(msg, state)
+        return
+    await state.update_data(next_caption=text)
     await msg.answer(
-        "✅ Video qabul qilindi! 📹\n\n"
-        "📝 *Yozuv (caption) kiriting* — foydalanuvchi videoni ko'rganda pastida ko'rinadi.\n"
-        "_(O'tkazib yuborish uchun '-' yuboring)_",
+        f"📝 _Izoh qabul qilindi: «{text}»_\n"
+        f"Endi videoni yuboring:",
         parse_mode="Markdown"
     )
-    await state.set_state(AdminSt.video_caption)
 
-@router.message(AdminSt.video_caption)
-async def admin_video_caption_save(msg: Message, state: FSMContext):
-    if msg.from_user.id not in ADMIN_IDS: return
-    from database.db import save_day_video
+
+@router.callback_query(F.data == "video_upload_done")
+async def cb_video_upload_done(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    await _finish_video_upload(call.message, state)
+    await call.answer()
+
+
+async def _finish_video_upload(msg_or_msg, state):
+    from database.db import get_day_videos
     data = await state.get_data()
-    caption = "" if (msg.text or "").strip() == "-" else (msg.text or "").strip()
     day = data.get("video_day", 1)
-    total = await save_day_video(
-        day,
-        data.get("video_file_id", ""),
-        data.get("video_file_type", "video_note"),
-        caption
-    )
+    videos = await get_day_videos(day)
     await state.clear()
-    tip = f"\n_Izoh: {caption}_" if caption else ""
-    vtype = "⭕ Aylana" if data.get("video_file_type") == "video_note" else "📹 Oddiy"
-    await msg.answer(
-        f"✅ {vtype} video saqlandi!\n"
-        f"📅 {day}-kun uchun jami: *{total}* ta video{tip}\n\n"
-        f"_Yana shu kun uchun video yuklash uchun 'Mashq videosi yuklash' tugmasini bosing._",
+    try:
+        await msg_or_msg.edit_text(
+            f"✅ *{day}-kun mashq videolari saqlandi!*\n"
+            f"📹 Jami: *{len(videos)}* ta video",
+            reply_markup=None, parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    # Admin panelga qaytish uchun yangi xabar
+    from keyboards.keyboards import admin_kb
+    await msg_or_msg.answer(
+        f"✅ *{day}-kun* uchun *{len(videos)}* ta video saqlandi! 🎉",
         reply_markup=admin_kb(), parse_mode="Markdown"
     )
+
+@router.message(AdminSt.video_caption)
+async def admin_video_caption_legacy(msg: Message, state: FSMContext):
+    """Legacy — endi ishlatilmaydi"""
+    pass
 
 @router.callback_query(F.data == "admin_main")
 async def cb_admin_main(call: CallbackQuery):
