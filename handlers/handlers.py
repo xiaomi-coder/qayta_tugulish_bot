@@ -876,24 +876,104 @@ async def cb_challenge_main(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("day:"))
 async def cb_day(call: CallbackQuery):
-    day = int(call.data.split(":")[1])
+    from database.db import get_day_videos
+    day   = int(call.data.split(":")[1])
+    user  = await get_user(call.from_user.id)
     completed = await get_completed_days(call.from_user.id)
-    is_done = day in completed
-    meals = get_day_meals(day)
-    exercises = get_day_exercises(day)
-    logged_m = await get_logged_meals(call.from_user.id, day)
-    logged_e = await get_logged_exercises(call.from_user.id, day)
-    water = await get_today_water(call.from_user.id)
+    is_done   = day in completed
+    water     = await get_today_water(call.from_user.id)
+    day_videos = await get_day_videos(day)
 
+    # ── 1. Kun sarlavhasi ──
     await call.message.edit_text(
-        f"📅 *{day}-KUN* {'✅' if is_done else ''}\n\n"
+        f"📅 *{day}-KUN* {'✅' if is_done else '🔥'}\n\n"
         f"_{get_motivation(day)}_\n\n"
         f"💡 _{get_day_tip(day)}_\n\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"💧 Suv: {wbar(water,3000)}\n"
-        f"🍽️ Ovqat: *{len(logged_m)}/{len(meals)}* | 💪 Mashq: *{len(logged_e)}/{len(exercises)}*\n"
-        f"━━━━━━━━━━━━━━━━━",
-        reply_markup=day_detail_kb(day), parse_mode="Markdown"
+        f"💧 Suv: {wbar(water, 3000)}",
+        parse_mode="Markdown"
+    )
+
+    # ── 2. Mashq videolari (avtomatik) ──
+    if day_videos:
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"💪 *{day}-KUN MASHQLARI* — {len(day_videos)} ta video:",
+            parse_mode="Markdown"
+        )
+        for i, v in enumerate(day_videos, 1):
+            cap = v["caption"] or f"📹 {day}-kun | Mashq {i}"
+            try:
+                if v["type"] == "video_note":
+                    await call.bot.send_video_note(
+                        call.message.chat.id,
+                        video_note=v["file_id"],
+                        protect_content=True
+                    )
+                    if v["caption"]:
+                        await call.bot.send_message(
+                            call.message.chat.id,
+                            f"💬 _{v['caption']}_",
+                            parse_mode="Markdown"
+                        )
+                else:
+                    await call.bot.send_video(
+                        call.message.chat.id,
+                        video=v["file_id"],
+                        caption=cap[:1024],
+                        parse_mode="Markdown",
+                        protect_content=True
+                    )
+            except Exception as e:
+                logger.warning(f"Video yuborishda xato: {e}")
+    else:
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"💪 *{day}-KUN MASHQLARI*\n\n"
+            f"📹 Videolar tez orada qo'shiladi!",
+            parse_mode="Markdown"
+        )
+
+    # ── 3. Ovqat plan rasmi (avtomatik) ──
+    weight = float(user.get("weight") or 100) if user else 100.0
+    age_group_val = user.get("age_group", "adult") if user else "adult"
+    rp_key = get_ration_plan_key(weight, age_group_val)
+    rp_img = await get_ration_plan_image(rp_key)
+    if rp_img:
+        rp_cap = (rp_img.get("caption") or
+                  f"🥗 *{day}-kun ovqat ratsioni*\n"
+                  f"{RATION_PLAN_KEYS.get(rp_key, '')} 💪")
+        try:
+            await call.bot.send_photo(
+                call.message.chat.id,
+                photo=rp_img["file_id"],
+                caption=rp_cap[:1024],
+                parse_mode="Markdown",
+                protect_content=True
+            )
+        except Exception as e:
+            logger.warning(f"Ratsion rasmi yuborilmadi: {e}")
+    else:
+        # Plan rasmi yo'q — ovqat matn ko'rsatamiz
+        gender = user.get("gender", "erkak") if user else "erkak"
+        from data.ration_data import get_ration_for_weight_gender
+        ration = get_ration_for_weight_gender(weight, gender)
+        lines = "\n".join(
+            f"{m.get('icon','🍽️')} *{m['name']}* — {m['time']} ({m['cal']} kkal)"
+            for m in ration["meals"]
+        )
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"🥗 *{day}-KUN OVQAT RATSIONI*\n\n{lines}",
+            parse_mode="Markdown"
+        )
+
+    # ── 4. Tugmalar ──
+    await call.bot.send_message(
+        call.message.chat.id,
+        f"{'✅ Kun bajarildi!' if is_done else '👇 Bajarilgandan so\'ng belgilang:'}",
+        reply_markup=day_simple_kb(day, is_done),
+        parse_mode="Markdown"
     )
     await call.answer()
 

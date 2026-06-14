@@ -161,12 +161,9 @@ def after_payment_kb() -> InlineKeyboardMarkup:
 def main_menu_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🔥 30-Kunlik Challendj"))
-    b.row(KeyboardButton(text="🥗 Mening Ratsionim"),
-          KeyboardButton(text="💧 Suv Tracker"))
-    b.row(KeyboardButton(text="🏋️ Mashqlar"),
+    b.row(KeyboardButton(text="💧 Suv Tracker"),
           KeyboardButton(text="📊 Statistika"))
-    b.row(KeyboardButton(text="👤 Profilim"),
-          KeyboardButton(text="⚙️ Sozlamalar"))
+    b.row(KeyboardButton(text="👤 Profilim"))
     return b.as_markup(resize_keyboard=True)
 
 # ════ CHALLENGE ════
@@ -191,6 +188,18 @@ def day_detail_kb(day: int) -> InlineKeyboardMarkup:
     b.button(text="Kunni yakunlash",callback_data=f"complete:{day}")
     b.button(text="Challendj",      callback_data="challenge_main")
     b.adjust(2, 2, 1)
+    return b.as_markup()
+
+def day_simple_kb(day: int, is_done: bool = False) -> InlineKeyboardMarkup:
+    """Soddalashtirilgan kun tugmalari"""
+    b = InlineKeyboardBuilder()
+    b.button(text="💧 Suv qo'shish", callback_data=f"water_day:{day}")
+    if is_done:
+        b.button(text="✅ Bajarildi!", callback_data=f"exall_toggle:{day}:0")
+    else:
+        b.button(text="✅ Kunni yakunladim!", callback_data=f"complete:{day}")
+    b.button(text="◀️ Challendj", callback_data="challenge_main")
+    b.adjust(1)
     return b.as_markup()
 
 def meals_kb(day: int, meals: list, logged: list) -> InlineKeyboardMarkup:
