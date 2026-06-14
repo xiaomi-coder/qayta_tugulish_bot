@@ -704,7 +704,7 @@ async def my_nutrition(msg: Message):
             logger.warning(f"Plan rasmi yuborilmadi (my_nutrition): {e}")
 
     # ── Xulosa xabar ──
-    await msg.answer(
+    summary = (
         f"🥗 *SIZNING KUNLIK RATSIONINGIZ*\n\n"
         f"📊 Kategoriya: *{ration['title']}*\n"
         f"━━━━━━━━━━━━━━━━━\n"
@@ -712,9 +712,17 @@ async def my_nutrition(msg: Message):
         f"💪 Oqsil:   *{total_prot}g*\n"
         f"🌾 Uglevod: *{total_carb}g*\n"
         f"🫒 Yog':    *{total_fat}g*\n"
-        f"💧 Suv:     *{ration['water']}*\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"_Kartochkalar yuklanmoqda..._ ⏳",
+        f"💧 Suv:     *{ration['water']}*"
+    )
+
+    # Plan rasmi bo'lsa — faqat xulosa matn, kartochka yo'q
+    if rp_img:
+        await msg.answer(summary, parse_mode="Markdown")
+        return  # PNG kartochkalar ko'rsatilmaydi
+
+    # Plan rasmi yo'q — eski kartochkalar ko'rsatiladi
+    await msg.answer(
+        summary + f"\n━━━━━━━━━━━━━━━━━\n_Kartochkalar yuklanmoqda..._ ⏳",
         parse_mode="Markdown"
     )
 
@@ -728,7 +736,6 @@ async def my_nutrition(msg: Message):
             f"⏰ {meal['time']}\n"
             f"🔥 {meal['cal']} kkal  |  💪 {meal['protein']}g oqsil"
         )
-        # Admin yuklagan real foto bormi?
         ration_photo = await get_ration_photo(i)
         if ration_photo:
             file_cap = ration_photo.get("caption", "") or short_cap
@@ -742,7 +749,6 @@ async def my_nutrition(msg: Message):
                 continue
             except Exception:
                 pass
-        # Real foto yo'q — PNG kartochka yarat
         try:
             card_bytes = create_meal_card(meal, i, len(ration["meals"]), ration["title"])
             photo = BufferedInputFile(card_bytes, filename=f"meal_{i+1}.png")
