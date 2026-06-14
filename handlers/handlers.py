@@ -969,9 +969,10 @@ async def cb_day(call: CallbackQuery):
         )
 
     # ── 4. Tugmalar ──
+    done_txt = "✅ Kun bajarildi!" if is_done else "👇 Bajarilgandan so'ng belgilang:"
     await call.bot.send_message(
         call.message.chat.id,
-        f"{'✅ Kun bajarildi!' if is_done else '👇 Bajarilgandan so\'ng belgilang:'}",
+        done_txt,
         reply_markup=day_simple_kb(day, is_done),
         parse_mode="Markdown"
     )
