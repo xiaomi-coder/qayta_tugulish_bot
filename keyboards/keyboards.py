@@ -104,12 +104,30 @@ def start_kb() -> InlineKeyboardMarkup:
     b.button(text="Boshlash!", callback_data="start_reg")
     return b.as_markup()
 
+# ════ AGE GROUP ════
+def age_group_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="👤 O'zim uchun (kattalar)", callback_data="age_group:adult")
+    b.button(text="👦 Farzandim uchun (9-13 yosh)", callback_data="age_group:child")
+    b.adjust(1)
+    return b.as_markup()
+
 # ════ GENDER ════
 def gender_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="Erkak", callback_data="gender:erkak")
     b.button(text="Ayol",  callback_data="gender:ayol")
     b.adjust(2)
+    return b.as_markup()
+
+# ════ RATSION PLAN RASMI (admin) ════
+def ration_plan_image_kb() -> InlineKeyboardMarkup:
+    from config import RATION_PLAN_KEYS
+    b = InlineKeyboardBuilder()
+    for key, name in RATION_PLAN_KEYS.items():
+        b.button(text=name, callback_data=f"rplan_img:{key}")
+    b.button(text="◀️ Orqaga", callback_data="admin_main")
+    b.adjust(1)
     return b.as_markup()
 
 # ════ PHONE ════
@@ -228,9 +246,10 @@ def water_kb(day: int = 0) -> InlineKeyboardMarkup:
 # ════ ADMIN ════
 def admin_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="Kutayotgan tolovlar",    callback_data="admin:payments")
-    b.button(text="Ratsion rasmi yuklash",  callback_data="admin:ration_photo")
-    b.button(text="Ovqat rasmi yuklash",    callback_data="admin:upload_photo")
+    b.button(text="Kutayotgan tolovlar",      callback_data="admin:payments")
+    b.button(text="Plan rasmi yuklash 🖼️",  callback_data="admin:ration_plan_images")
+    b.button(text="Ratsion rasmi yuklash",   callback_data="admin:ration_photo")
+    b.button(text="Ovqat rasmi yuklash",     callback_data="admin:upload_photo")
     b.button(text="Mashq videosi yuklash",  callback_data="admin:upload_video")
     b.button(text="Salomlashuv videosi",    callback_data="admin:welcome_video")
     b.button(text="Motivatsiya videosi",    callback_data="admin:motivation_video")

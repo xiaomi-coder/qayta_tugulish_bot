@@ -7,7 +7,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 
 from config import (ADMIN_IDS, PAYMENT_CARD, PAYMENT_PAYME, PAYMENT_CLICK,
-                    PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES, MUST_JOIN_CHANNEL)
+                    PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES, MUST_JOIN_CHANNEL,
+                    RATION_PLAN_KEYS, get_ration_plan_key)
 from database.db import *
 from keyboards.keyboards import *
 from data.meals_data import get_day_meals, get_day_exercises, get_day_tip, get_motivation
@@ -99,11 +100,12 @@ def protect(text: str) -> str:
 # STATES
 # ══════════════════════════════════
 class Reg(StatesGroup):
-    name   = State()
-    phone  = State()
-    weight = State()
-    height = State()
-    gender = State()
+    name      = State()
+    phone     = State()
+    age_group = State()   # adult / child
+    weight    = State()
+    height    = State()
+    gender    = State()
 
 class PayState(StatesGroup):
     method  = State()
@@ -123,9 +125,11 @@ class AdminSt(StatesGroup):
     welcome_vid  = State()
     motiv_vid    = State()
     premium_id   = State()
-    ration_meal  = State()    # ratsion ovqat rasmi — qaysi ovqat
-    ration_file  = State()    # ratsion ovqat rasmi — faylni yuklash
-    ration_caption = State()  # ratsion ovqat rasmi — yozuv
+    ration_meal    = State()    # ratsion ovqat rasmi — qaysi ovqat
+    ration_file    = State()    # ratsion ovqat rasmi — faylni yuklash
+    ration_caption = State()    # ratsion ovqat rasmi — yozuv
+    plan_img_key   = State()    # plan rasmi — qaysi kategoriya
+    plan_img_file  = State()    # plan rasmi — fayl
     edit_plan_key = State()
     edit_plan_field = State()
     edit_plan_value = State()
@@ -306,19 +310,60 @@ async def reg_phone_contact(msg: Message, state: FSMContext):
     phone = msg.contact.phone_number
     await state.update_data(phone=phone)
     await msg.answer(
-        "⚖️ *Vazningizni kiriting* (kg da)\n_Masalan: 120_",
+        "👥 *Kim uchun ro'yxatdan o'tyapsiz?*",
         reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
     )
-    await state.set_state(Reg.weight)
+    await msg.answer(
+        "Quyidan tanlang 👇",
+        reply_markup=age_group_kb()
+    )
+    await state.set_state(Reg.age_group)
 
 @router.message(Reg.phone)
 async def reg_phone_text(msg: Message, state: FSMContext):
     await state.update_data(phone=msg.text.strip())
     await msg.answer(
-        "⚖️ *Vazningizni kiriting* (kg da)\n_Masalan: 120_",
+        "👥 *Kim uchun ro'yxatdan o'tyapsiz?*",
         reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
     )
-    await state.set_state(Reg.weight)
+    await msg.answer(
+        "Quyidan tanlang 👇",
+        reply_markup=age_group_kb()
+    )
+    await state.set_state(Reg.age_group)
+
+@router.callback_query(F.data.startswith("age_group:"))
+async def cb_age_group(call: CallbackQuery, state: FSMContext):
+    """Katta yoki bola tanlov"""
+    current = await state.get_state()
+    if current != Reg.age_group.state:
+        await call.answer()
+        return
+
+    group = call.data.split(":")[1]   # "adult" or "child"
+    await state.update_data(age_group=group)
+    try:
+        await call.message.edit_reply_markup()
+    except Exception:
+        pass
+    await call.answer()
+
+    if group == "child":
+        # Bola: vazn/bo'y so'ralmaydi — to'g'ri jinsgacha
+        await state.update_data(weight=0.0, height=0.0)
+        await call.message.answer(
+            "👶 *FARZANDINGIZ UCHUN*\n\n"
+            "Farzandingiz jinsini tanlang:",
+            reply_markup=gender_kb(), parse_mode="Markdown"
+        )
+        await state.set_state(Reg.gender)
+    else:
+        # Katta: avval vazn
+        await call.message.answer(
+            "⚖️ *Vazningizni kiriting* (kg da)\n_Masalan: 120_",
+            parse_mode="Markdown"
+        )
+        await state.set_state(Reg.weight)
 
 @router.message(Reg.weight)
 async def reg_weight(msg: Message, state: FSMContext):
@@ -545,6 +590,25 @@ async def admin_confirm_payment(call: CallbackQuery):
         parse_mode="HTML"
     )
 
+    # ── Ratsion plan rasmini yuborish ──
+    user_age_group = user.get("age_group", "adult")
+    user_weight    = float(user.get("weight") or 80)
+    rp_key  = get_ration_plan_key(user_weight, user_age_group)
+    rp_img  = await get_ration_plan_image(rp_key)
+    if rp_img:
+        rp_cap = (rp_img.get("caption") or
+                  f"🥗 {RATION_PLAN_KEYS.get(rp_key, 'Sizning ratsioningiz')}\n\n"
+                  f"Kunlik ovqatlanish rejangiz! Sog'lom va tartibli ovqatlaning 💪")
+        try:
+            await call.bot.send_photo(
+                uid,
+                photo=rp_img["file_id"],
+                caption=rp_cap[:1024],
+                protect_content=True
+            )
+        except Exception as e:
+            logger.warning(f"Plan rasmi yuborilmadi (uid={uid}): {e}")
+
 @router.callback_query(F.data.startswith("admin_reject:"))
 async def admin_reject_payment(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
@@ -620,6 +684,24 @@ async def my_nutrition(msg: Message):
     total_prot = sum(m["protein"] for m in ration["meals"])
     total_carb = sum(m["carbs"]   for m in ration["meals"])
     total_fat  = sum(m["fat"]     for m in ration["meals"])
+
+    # ── Plan rasmi (80+, 90-110, 110+, yoki bola) ──
+    age_group_val = user.get("age_group", "adult")
+    rp_key = get_ration_plan_key(float(weight), age_group_val)
+    rp_img = await get_ration_plan_image(rp_key)
+    if rp_img:
+        rp_cap = (rp_img.get("caption") or
+                  f"🥗 *{RATION_PLAN_KEYS.get(rp_key, 'Sizning ratsioningiz')}*\n"
+                  f"Kunlik ovqatlanish rejangiz 💪")
+        try:
+            await msg.answer_photo(
+                photo=rp_img["file_id"],
+                caption=rp_cap[:1024],
+                parse_mode="Markdown",
+                protect_content=True
+            )
+        except Exception as e:
+            logger.warning(f"Plan rasmi yuborilmadi (my_nutrition): {e}")
 
     # ── Xulosa xabar ──
     await msg.answer(
@@ -1299,6 +1381,72 @@ async def admin_ration_photo_save(msg: Message, state: FSMContext):
         reply_markup=admin_kb(), parse_mode="Markdown"
     )
 
+# ── Ratsion plan rasmlari (4 kategoriya) ─────────────────────
+@router.callback_query(F.data == "admin:ration_plan_images")
+async def admin_ration_plan_images(call: CallbackQuery, state: FSMContext):
+    """4 ta ratsion kategoriyasi uchun rasmlar yuklash"""
+    if call.from_user.id not in ADMIN_IDS: return
+    existing = await get_all_ration_plan_images()   # dict: {plan_key: {...}}
+    keys_done = set(existing.keys()) if existing else set()
+    status_lines = ""
+    for key, name in RATION_PLAN_KEYS.items():
+        mark = "✅" if key in keys_done else "⭕"
+        status_lines += f"{mark} {name}\n"
+    await call.message.edit_text(
+        f"🖼️ *RATSION PLAN RASMLARI*\n\n"
+        f"Yuklangan holatlar:\n{status_lines}\n"
+        f"Qaysi kategoriya uchun rasm yuklash?",
+        reply_markup=ration_plan_image_kb(), parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.plan_img_key)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("rplan_img:"))
+async def cb_rplan_img_select(call: CallbackQuery, state: FSMContext):
+    """Kategoriya tanlash → rasm yuklash"""
+    if call.from_user.id not in ADMIN_IDS: return
+    plan_key  = call.data.split(":")[1]
+    plan_name = RATION_PLAN_KEYS.get(plan_key, plan_key)
+    await state.update_data(plan_img_key=plan_key)
+    await call.message.edit_text(
+        f"📸 *{plan_name}* uchun rasm yuboring:\n\n"
+        f"_(Foydalanuvchilarga to'lov tasdiqlangandan so'ng avtomatik yuboriladi)_",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.plan_img_file)
+    await call.answer()
+
+
+@router.message(AdminSt.plan_img_file, F.photo)
+async def admin_plan_img_save(msg: Message, state: FSMContext):
+    """Rasm qabul qilish va saqlash"""
+    if msg.from_user.id not in ADMIN_IDS: return
+    data      = await state.get_data()
+    plan_key  = data.get("plan_img_key", "plan_80_plus")
+    plan_name = RATION_PLAN_KEYS.get(plan_key, plan_key)
+    file_id   = msg.photo[-1].file_id
+    await save_ration_plan_image(plan_key, file_id, "")
+    await state.clear()
+    await msg.answer(
+        f"✅ *{plan_name}* uchun rasm saqlandi! 🖼️\n\n"
+        f"_Endi to'lov tasdiqlanganda bu kategoriya foydalanuvchilariga avtomatik yuboriladi._\n\n"
+        f"Boshqa kategoriya uchun yuklash uchun tugmani bosing 👇",
+        reply_markup=admin_kb(), parse_mode="Markdown"
+    )
+
+
+@router.message(AdminSt.plan_img_key)
+async def admin_plan_img_key_text(msg: Message, state: FSMContext):
+    """Agar matn yuborse — inline tugma tanlashni eslatamiz"""
+    if msg.from_user.id not in ADMIN_IDS: return
+    await msg.answer(
+        "⬆️ Kategoriyani yuqoridagi tugmalar orqali tanlang:",
+        reply_markup=ration_plan_image_kb()
+    )
+
+
+# ── Ratsion edit ─────────────────────────────────────────────
 @router.callback_query(F.data == "admin:edit_nutrition")
 async def admin_edit_nutrition(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS: return
@@ -1714,32 +1862,50 @@ async def reg_region(msg: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    w = data.get("weight", 80)
-    h = data.get("height", 175)
+    age_group = data.get("age_group", "adult")
+    w = data.get("weight", 0) or 0
+    h = data.get("height", 0) or 0
     gender = data.get("gender", "erkak")
-    bmi = w / ((h/100)**2)
-    plan_key = get_plan_by_weight(w)
+
+    # BMI faqat kattalarda (va vazn/bo'y kiritilganda)
+    if age_group == "adult" and w > 0 and h > 0:
+        bmi = w / ((h / 100) ** 2)
+        bmi_text = ("🔵 Kam" if bmi < 18.5 else
+                    "🟢 Ideal" if bmi < 25 else
+                    "🟡 Ortiqcha" if bmi < 30 else
+                    "🔴 Semiz")
+        bmi_line = f"📊 BMI: {bmi:.1f} — {bmi_text}\n"
+        wh_line  = f"📏 {h} sm | ⚖️ {w} kg\n"
+    else:
+        bmi = 0
+        bmi_line = ""
+        wh_line  = ""
+
+    plan_key  = get_plan_by_weight(w) if w > 0 else "standard"
     plan_name = PLAN_NAMES[plan_key]
-    bmi_text = ("🔵 Kam" if bmi<18.5 else "🟢 Ideal" if bmi<25 else "🟡 Ortiqcha" if bmi<30 else "🔴 Semiz")
     gender_emoji = "👨" if gender == "erkak" else "👩"
 
     await update_user(
         msg.from_user.id,
-        full_name=data.get("name",""),
-        phone=data.get("phone",""),
+        full_name=data.get("name", ""),
+        phone=data.get("phone", ""),
         weight=w, height=h,
         gender=gender, region=region,
         plan_key=plan_key,
+        age_group=age_group,
         registered_at=datetime.now().isoformat()
     )
 
+    child_note = "\n👶 _9-13 yosh — maxsus bolalar ratsioni_\n" if age_group == "child" else ""
+
     await msg.answer(
         f"✅ *Ro'yxatdan o'tdingiz!*\n\n"
-        f"{gender_emoji} *{data.get('name','')}*\n"
-        f"📱 {data.get('phone','')}\n"
+        f"{gender_emoji} *{data.get('name', '')}*\n"
+        f"📱 {data.get('phone', '')}\n"
         f"📍 {region}\n"
-        f"📏 {h} sm | ⚖️ {w} kg\n"
-        f"📊 BMI: {bmi:.1f} — {bmi_text}\n\n"
+        f"{wh_line}"
+        f"{bmi_line}"
+        f"{child_note}"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🥗 *Sizning ratsioningiz:*\n{plan_name}\n\n"
         f"_To'lovdan so'ng avtomatik ochiladi!_",
