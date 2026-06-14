@@ -161,8 +161,7 @@ def after_payment_kb() -> InlineKeyboardMarkup:
 def main_menu_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🔥 30-Kunlik Challendj"))
-    b.row(KeyboardButton(text="💧 Suv Tracker"),
-          KeyboardButton(text="📊 Statistika"))
+    b.row(KeyboardButton(text="📊 Statistika"))
     b.row(KeyboardButton(text="👤 Profilim"))
     return b.as_markup(resize_keyboard=True)
 
@@ -193,7 +192,6 @@ def day_detail_kb(day: int) -> InlineKeyboardMarkup:
 def day_simple_kb(day: int, is_done: bool = False) -> InlineKeyboardMarkup:
     """Soddalashtirilgan kun tugmalari"""
     b = InlineKeyboardBuilder()
-    b.button(text="💧 Suv qo'shish", callback_data=f"water_day:{day}")
     if is_done:
         b.button(text="✅ Bajarildi!", callback_data=f"exall_toggle:{day}:0")
     else:
