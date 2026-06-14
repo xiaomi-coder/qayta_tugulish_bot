@@ -44,3 +44,22 @@ PLAN_NAMES = {
     "plan_150_200":  "🟠 Plan B (150-200 kg)",
     "plan_200_plus": "🔴 Plan C (200+ kg)",
 }
+
+# ── Ratsion plan rasmlari uchun kategoriyalar
+RATION_PLAN_KEYS = {
+    "plan_80_plus":  "💪 80+ kg",
+    "plan_90_110":   "🔥 90-110 kg",
+    "plan_110_plus": "⚡ 110+ kg",
+    "child_9_13":    "👦 9-13 yosh",
+}
+
+def get_ration_plan_key(weight: float, age_group: str = "adult") -> str:
+    """Foydalanuvchining ratsion plan kalitini qaytaradi"""
+    if age_group == "child":
+        return "child_9_13"
+    if weight < 90:
+        return "plan_80_plus"
+    elif weight <= 110:
+        return "plan_90_110"
+    else:
+        return "plan_110_plus"

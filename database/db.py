@@ -139,6 +139,21 @@ async def init_db():
             await db.execute("ALTER TABLE exercise_videos ADD COLUMN caption TEXT DEFAULT ''")
         except Exception:
             pass
+        # RATSION PLAN RASMLARI (80+, 90-110, 110+, 9-13 yosh)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ration_plan_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_key TEXT UNIQUE NOT NULL,
+                file_id TEXT NOT NULL,
+                caption TEXT DEFAULT '',
+                uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Users jadvaliga age_group ustunini qo'shish
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN age_group TEXT DEFAULT 'adult'")
+        except Exception:
+            pass
         # BOT MEDIA (welcome video etc)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS bot_media (
@@ -373,6 +388,31 @@ async def save_ration_photo(meal_idx: int, fid: str, caption: str = "") -> None:
 
 async def get_ration_photo(meal_idx: int) -> dict | None:
     return await get_meal_photo(0, meal_idx)
+
+# ════════ RATSION PLAN RASMLARI ════════
+async def save_ration_plan_image(plan_key: str, file_id: str, caption: str = "") -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO ration_plan_images (plan_key, file_id, caption) VALUES (?,?,?)",
+            (plan_key, file_id, caption)
+        )
+        await db.commit()
+
+async def get_ration_plan_image(plan_key: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT file_id, caption FROM ration_plan_images WHERE plan_key=?",
+            (plan_key,)
+        ) as c:
+            r = await c.fetchone()
+            return {"file_id": r[0], "caption": r[1] or ""} if r else None
+
+async def get_all_ration_plan_images() -> dict:
+    """Barcha plan rasmlarini {plan_key: {file_id, caption}} formatida qaytaradi"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT plan_key, file_id, caption FROM ration_plan_images") as c:
+            rows = await c.fetchall()
+            return {r[0]: {"file_id": r[1], "caption": r[2] or ""} for r in rows}
 
 # ════════ EXERCISE VIDEOS ════════
 async def save_exercise_video(key: str, fid: str, vtype: str = "video_note", caption: str = "") -> None:
