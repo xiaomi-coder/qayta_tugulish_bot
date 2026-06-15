@@ -29,17 +29,19 @@ def make_signature(api_secret: str, method: str, path: str,
 
 
 def verify_webhook_signature(api_secret: str, payload: dict) -> bool:
-    """WLCM webhook imzosini tekshiradi."""
+    """WLCM webhook imzosini tekshiradi.
+    Format: order_id:payment_id:state:timestamp
+    """
     received_sig = payload.get("signature", "")
-    timestamp = str(payload.get("timestamp", ""))
-    order_id = str(payload.get("order_id", ""))
-    amount = str(payload.get("amount", ""))
-    state = str(payload.get("state", ""))
-
-    message = f"{order_id}\n{amount}\n{state}\n{timestamp}"
+    msg = (
+        f"{payload.get('order_id', '')}:"
+        f"{payload.get('payment_id', '')}:"
+        f"{payload.get('state', '')}:"
+        f"{payload.get('timestamp', '')}"
+    )
     expected = hmac.new(
         key=api_secret.encode(),
-        msg=message.encode(),
+        msg=msg.encode(),
         digestmod=hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(received_sig, expected)
