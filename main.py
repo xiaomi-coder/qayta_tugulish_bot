@@ -4,8 +4,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp import web
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, wlcm_enabled, WLCM_WEBHOOK_PORT
 from database.db import init_db
 from handlers.handlers import router
 from utils.scheduler import setup_scheduler
@@ -46,6 +47,17 @@ async def main():
     # ── Webhook o'chirish (polling uchun)
     await bot.delete_webhook(drop_pending_updates=True)
 
+    # ── WLCM Webhook server (agar sozlangan bo'lsa)
+    wlcm_runner = None
+    if wlcm_enabled():
+        from utils.webhook_server import create_webhook_app
+        wlcm_app = create_webhook_app(bot)
+        wlcm_runner = web.AppRunner(wlcm_app)
+        await wlcm_runner.setup()
+        site = web.TCPSite(wlcm_runner, "0.0.0.0", WLCM_WEBHOOK_PORT)
+        await site.start()
+        logger.info("✅ WLCM webhook server port %s da ishga tushdi", WLCM_WEBHOOK_PORT)
+
     logger.info("✅ Bot polling boshlandi!")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("   QAYTA TUG'ILISH FITNESS BOT")
@@ -56,6 +68,8 @@ async def main():
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown()
+        if wlcm_runner:
+            await wlcm_runner.cleanup()
         await bot.session.close()
         logger.info("🛑 Bot to'xtatildi")
 

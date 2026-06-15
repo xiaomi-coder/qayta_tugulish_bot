@@ -265,6 +265,76 @@ async def get_payment(pay_id: int) -> dict | None:
         async with db.execute("SELECT * FROM payments WHERE id=?", (pay_id,)) as c:
             r = await c.fetchone(); return dict(r) if r else None
 
+async def get_payment_by_external(external_id: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM payments WHERE id=?", (external_id,)) as c:
+            r = await c.fetchone(); return dict(r) if r else None
+
+async def confirm_payment_auto(bot, pay_id: int) -> None:
+    """WLCM webhook orqali to'lovni avtomatik tasdiqlaydi va premium beradi."""
+    from datetime import datetime
+    payment = await get_payment(pay_id)
+    if not payment:
+        return
+    if payment.get("status") == "confirmed":
+        return  # Ikki marta tasdiqlamaslik
+
+    uid = payment["user_id"]
+    plan_key = payment.get("plan_key", "standard")
+
+    await update_payment(pay_id, status="confirmed", confirmed_at=datetime.now().isoformat())
+    await update_user(uid, is_premium=1, challenge_day=1,
+                      challenge_started=datetime.now().isoformat())
+
+    # Foydalanuvchiga xabar
+    from config import PLAN_NAMES, RATION_PLAN_KEYS, get_ration_plan_key
+    user = await get_user(uid)
+    plan = await get_nutrition_plan(plan_key)
+    plan_name = PLAN_NAMES.get(plan_key, "")
+    meals_list = ""
+    if plan and plan.get("meals"):
+        for m in plan["meals"].split("|"):
+            meals_list += f"• {m.strip()}\n"
+
+    from keyboards.keyboards import main_menu_kb
+    try:
+        await bot.send_message(
+            uid,
+            f"🎉 <b>TABRIKLAYMIZ!</b>\n\n"
+            f"✅ To'lovingiz tasdiqlandi! (Paylov)\n"
+            f"🔥 30-kunlik challendj boshlandi!\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"🥗 <b>SIZNING RATSIONINGIZ:</b>\n"
+            f"<b>{plan_name}</b>\n\n"
+            f"📊 Kaloriya: {plan['cal_range'] if plan else '-'} kkal\n"
+            f"💪 Oqsil: {plan['protein'] if plan else '-'}\n"
+            f"🌾 Uglevod: {plan['carb'] if plan else '-'}\n"
+            f"🫒 Yog': {plan['fat'] if plan else '-'}\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"🍽️ <b>Kunlik menyu:</b>\n{meals_list}\n"
+            f"━━━━━━━━━━━━━━━━━\n\n"
+            f"Pastdagi menyudan boshlang! 💪",
+            reply_markup=main_menu_kb(),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    # Ratsion plan rasmini yuborish
+    user_age_group = user.get("age_group", "adult") if user else "adult"
+    user_weight = float(user.get("weight") or 80) if user else 80.0
+    rp_key = get_ration_plan_key(user_weight, user_age_group)
+    rp_img = await get_ration_plan_image(rp_key)
+    if rp_img:
+        rp_cap = (rp_img.get("caption") or
+                  f"🥗 {RATION_PLAN_KEYS.get(rp_key, 'Sizning ratsioningiz')}\n\nKunlik ovqatlanish rejangiz! 💪")
+        try:
+            await bot.send_photo(uid, photo=rp_img["file_id"],
+                                 caption=rp_cap[:1024], protect_content=True)
+        except Exception:
+            pass
+
 # ════════ NUTRITION PLANS ════════
 async def get_nutrition_plan(plan_key: str) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:

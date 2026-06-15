@@ -143,8 +143,10 @@ def challenge_info_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 # ════ PAYMENT METHOD ════
-def payment_method_kb() -> InlineKeyboardMarkup:
+def payment_method_kb(wlcm_on: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    if wlcm_on:
+        b.button(text="💚 Paylov (avtomatik)", callback_data="pay_method:paylov")
     b.button(text="Payme",           callback_data="pay_method:payme")
     b.button(text="Click",           callback_data="pay_method:click")
     b.button(text="Karta (otkazma)", callback_data="pay_method:card")

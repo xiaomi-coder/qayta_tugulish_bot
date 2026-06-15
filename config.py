@@ -45,6 +45,16 @@ PLAN_NAMES = {
     "plan_200_plus": "🔴 Plan C (200+ kg)",
 }
 
+# ── WLCM (Paylov) integratsiya
+WLCM_API_KEY      = os.getenv("WLCM_API_KEY", "")
+WLCM_API_SECRET   = os.getenv("WLCM_API_SECRET", "")
+WLCM_BASE_URL     = os.getenv("WLCM_BASE_URL", "https://sandbox.wlcm.uz")
+WLCM_WEBHOOK_PORT = int(os.getenv("WLCM_WEBHOOK_PORT", "8080"))
+WLCM_RETURN_URL   = os.getenv("WLCM_RETURN_URL", "https://t.me/QaytaTugulishBot")
+
+def wlcm_enabled() -> bool:
+    return bool(WLCM_API_KEY and WLCM_API_SECRET)
+
 # ── Ratsion plan rasmlari uchun kategoriyalar
 RATION_PLAN_KEYS = {
     "plan_80_plus":  "💪 80+ kg",

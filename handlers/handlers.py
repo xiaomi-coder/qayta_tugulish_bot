@@ -8,7 +8,9 @@ from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 
 from config import (ADMIN_IDS, PAYMENT_CARD, PAYMENT_PAYME, PAYMENT_CLICK,
                     PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES, MUST_JOIN_CHANNEL,
-                    RATION_PLAN_KEYS, get_ration_plan_key)
+                    RATION_PLAN_KEYS, get_ration_plan_key,
+                    WLCM_API_KEY, WLCM_API_SECRET, WLCM_BASE_URL,
+                    WLCM_RETURN_URL, wlcm_enabled)
 from database.db import *
 from keyboards.keyboards import *
 from data.meals_data import get_day_meals, get_day_exercises, get_day_tip, get_motivation
@@ -405,7 +407,7 @@ async def cb_go_payment(call: CallbackQuery, state: FSMContext):
         f"💳 *TO'LOV USULINI TANLANG*\n\n"
         f"💰 Narx: *{PRICE_30_DAY:,} so'm*\n\n"
         f"Qaysi usulda to'lashni xohlaysiz?",
-        reply_markup=payment_method_kb(), parse_mode="Markdown"
+        reply_markup=payment_method_kb(wlcm_on=wlcm_enabled()), parse_mode="Markdown"
     )
     await state.set_state(PayState.method)
 
@@ -415,9 +417,44 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
     user = await get_user(call.from_user.id)
     plan_key = user.get("plan_key", "standard") if user else "standard"
 
-    await state.set_state(PayState.method)   # state yo'qolsa qayta tiklaymiz
+    await state.set_state(PayState.method)
     pay_id = await create_payment(call.from_user.id, PRICE_30_DAY, method, plan_key)
     await state.update_data(pay_id=pay_id, method=method)
+
+    # ── Paylov (WLCM) avtomatik to'lov ──
+    if method == "paylov" and wlcm_enabled():
+        from utils.wlcm import create_checkout
+        from aiogram.types import InlineKeyboardMarkup
+        from aiogram.utils.keyboard import InlineKeyboardBuilder as IKB
+        result = await create_checkout(
+            api_key=WLCM_API_KEY,
+            api_secret=WLCM_API_SECRET,
+            base_url=WLCM_BASE_URL,
+            external_id=str(pay_id),
+            amount_som=PRICE_30_DAY,
+            payment_provider="paylov",
+            return_url=WLCM_RETURN_URL,
+        )
+        data = result.get("data", {})
+        checkout_url = data.get("checkout_url")
+        if checkout_url:
+            b = IKB()
+            b.button(text="💚 Paylov orqali to'lash", url=checkout_url)
+            await call.message.edit_text(
+                f"💚 *PAYLOV ORQALI TO'LOV*\n\n"
+                f"💰 Summa: *{PRICE_30_DAY:,} so'm*\n\n"
+                f"Quyidagi tugmani bosib to'lang.\n"
+                f"To'lov tasdiqlangach, premium avtomatik aktivlanadi! ✅",
+                reply_markup=b.as_markup(), parse_mode="Markdown"
+            )
+        else:
+            await call.message.edit_text(
+                f"❌ Paylov checkout yaratilmadi. Boshqa usulni tanlang.\n"
+                f"Xato: {data}",
+                reply_markup=payment_method_kb(wlcm_on=False), parse_mode="Markdown"
+            )
+        await call.answer()
+        return
 
     if method == "payme":
         details = (
