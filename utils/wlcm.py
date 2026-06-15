@@ -73,6 +73,7 @@ async def create_checkout(
         "X-API-Key": api_key,
         "X-Timestamp": timestamp,
         "X-Signature": sig,
+        "User-Agent": "curl/7.88.1",
     }
 
     try:
