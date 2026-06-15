@@ -16,10 +16,20 @@ async def wlcm_webhook(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(status=400, text="Invalid JSON")
 
-    # Imzo tekshirish (WLCM_API_SECRET bo'lsa)
-    if WLCM_API_SECRET and not verify_webhook_signature(WLCM_API_SECRET, data):
-        logger.warning("WLCM webhook: imzo noto'g'ri!")
-        return web.Response(status=403, text="Bad signature")
+    # Imzo tekshirish — header yoki body dan
+    if WLCM_API_SECRET:
+        header_sig = request.headers.get("X-Webhook-Signature", "")
+        if header_sig:
+            # Header da imzo bor — u bilan tekshir
+            from utils.wlcm import verify_webhook_signature
+            check_data = dict(data)
+            check_data["signature"] = header_sig
+            if not verify_webhook_signature(WLCM_API_SECRET, check_data):
+                logger.warning("WLCM webhook: header imzo noto'g'ri!")
+                return web.Response(status=403, text="Bad signature")
+        elif not verify_webhook_signature(WLCM_API_SECRET, data):
+            logger.warning("WLCM webhook: body imzo noto'g'ri!")
+            return web.Response(status=403, text="Bad signature")
 
     state = data.get("state")
     external_id = data.get("external_id")
