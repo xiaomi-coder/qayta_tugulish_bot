@@ -421,10 +421,10 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
     pay_id = await create_payment(call.from_user.id, PRICE_30_DAY, method, plan_key)
     await state.update_data(pay_id=pay_id, method=method)
 
-    # ── Paylov (WLCM) avtomatik to'lov ──
-    if method == "paylov" and wlcm_enabled():
+    # ── WLCM orqali avtomatik to'lov (payme, click, paylov) ──
+    WLCM_PROVIDERS = {"payme": "🟢 Payme", "click": "🔵 Click", "paylov": "💚 Paylov"}
+    if method in WLCM_PROVIDERS and wlcm_enabled():
         from utils.wlcm import create_checkout
-        from aiogram.types import InlineKeyboardMarkup
         from aiogram.utils.keyboard import InlineKeyboardBuilder as IKB
         result = await create_checkout(
             api_key=WLCM_API_KEY,
@@ -432,29 +432,26 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
             base_url=WLCM_BASE_URL,
             external_id=str(pay_id),
             amount_som=PRICE_30_DAY,
-            payment_provider="paylov",
+            payment_provider=method,
             return_url=WLCM_RETURN_URL,
         )
         data = result.get("data", {})
         checkout_url = data.get("checkout_url")
+        label = WLCM_PROVIDERS[method]
         if checkout_url:
             b = IKB()
-            b.button(text="💚 Paylov orqali to'lash", url=checkout_url)
+            b.button(text=f"{label} orqali to'lash", url=checkout_url)
             await call.message.edit_text(
-                f"💚 *PAYLOV ORQALI TO'LOV*\n\n"
+                f"{label} *ORQALI TO'LOV*\n\n"
                 f"💰 Summa: *{PRICE_30_DAY:,} so'm*\n\n"
                 f"Quyidagi tugmani bosib to'lang.\n"
                 f"To'lov tasdiqlangach, premium avtomatik aktivlanadi! ✅",
                 reply_markup=b.as_markup(), parse_mode="Markdown"
             )
-        else:
-            await call.message.edit_text(
-                f"❌ Paylov checkout yaratilmadi. Boshqa usulni tanlang.\n"
-                f"Xato: {data}",
-                reply_markup=payment_method_kb(wlcm_on=False), parse_mode="Markdown"
-            )
-        await call.answer()
-        return
+            await call.answer()
+            return
+        # checkout URL kelmasa — qo'lda davom et
+        logger.warning("WLCM checkout URL kelmadi: %s", data)
 
     if method == "payme":
         details = (
