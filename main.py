@@ -54,7 +54,7 @@ async def main():
         wlcm_app = create_webhook_app(bot)
         wlcm_runner = web.AppRunner(wlcm_app)
         await wlcm_runner.setup()
-        site = web.TCPSite(wlcm_runner, "0.0.0.0", WLCM_WEBHOOK_PORT)
+        site = web.TCPSite(wlcm_runner, "0.0.0.0", WLCM_WEBHOOK_PORT, reuse_port=True)
         await site.start()
         logger.info("✅ WLCM webhook server port %s da ishga tushdi", WLCM_WEBHOOK_PORT)
 
