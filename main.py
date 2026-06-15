@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import os
+import signal
+import socket
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
@@ -11,7 +14,6 @@ from database.db import init_db
 from handlers.handlers import router
 from utils.scheduler import setup_scheduler
 
-# ── Logging sozlash
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -24,14 +26,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _free_port(port: int) -> None:
+    """Portni band qilgan processni o'ldiradi."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", port))
+    except OSError:
+        # Port band — fuser bilan o'ldiramiz
+        os.system(f"fuser -k {port}/tcp 2>/dev/null")
+        asyncio.get_event_loop().run_until_complete(asyncio.sleep(0.5))
+
+
 async def main():
     logger.info("🚀 QAYTA TUG'ILISH Bot ishga tushmoqda...")
 
-    # ── Database initsializatsiya
     await init_db()
     logger.info("✅ Database tayyor")
 
-    # ── Bot va Dispatcher
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -39,24 +51,28 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # ── Scheduler
     scheduler = setup_scheduler(bot)
     scheduler.start()
     logger.info("✅ Scheduler ishga tushdi")
 
-    # ── Webhook o'chirish (polling uchun)
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # ── WLCM Webhook server (agar sozlangan bo'lsa)
+    # ── WLCM Webhook server
     wlcm_runner = None
     if wlcm_enabled():
-        from utils.webhook_server import create_webhook_app
-        wlcm_app = create_webhook_app(bot)
-        wlcm_runner = web.AppRunner(wlcm_app)
-        await wlcm_runner.setup()
-        site = web.TCPSite(wlcm_runner, "0.0.0.0", WLCM_WEBHOOK_PORT, reuse_port=True)
-        await site.start()
-        logger.info("✅ WLCM webhook server port %s da ishga tushdi", WLCM_WEBHOOK_PORT)
+        try:
+            _free_port(WLCM_WEBHOOK_PORT)
+            from utils.webhook_server import create_webhook_app
+            wlcm_app = create_webhook_app(bot)
+            wlcm_runner = web.AppRunner(wlcm_app)
+            await wlcm_runner.setup()
+            site = web.TCPSite(wlcm_runner, "0.0.0.0", WLCM_WEBHOOK_PORT,
+                               reuse_address=True, reuse_port=True)
+            await site.start()
+            logger.info("✅ WLCM webhook server port %s da ishga tushdi", WLCM_WEBHOOK_PORT)
+        except Exception as e:
+            logger.error("❌ WLCM webhook server ishga tushmadi: %s", e)
+            wlcm_runner = None
 
     logger.info("✅ Bot polling boshlandi!")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
