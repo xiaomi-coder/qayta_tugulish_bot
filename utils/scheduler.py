@@ -3,8 +3,9 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from database.db import get_all_users, get_today_water, get_bot_media
+from database.db import get_all_users, get_today_water, get_bot_media, confirm_payment_auto
 from data.meals_data import get_day_tip, get_motivation
+from config import ADMIN_IDS, wlcm_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,60 @@ async def send_evening_summary(bot):
             pass
 
 
+_notified_pay_ids: set = set()  # session ichida takroriy xabar yubormaslik uchun
+
+
+# ── WLCM pending to'lovlarni tekshirish ─────────────────────
+async def check_pending_wlcm_payments(bot):
+    """Har 5 daqiqada: 10 daqiqadan ko'p kutgan pending WLCM to'lovlarni adminга bildiradi."""
+    if not wlcm_enabled():
+        return
+    import aiosqlite
+    from config import DB_PATH
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT p.id, p.user_id, p.amount, p.method, p.created_at,
+                       u.full_name, u.phone
+                FROM payments p
+                JOIN users u ON p.user_id = u.telegram_id
+                WHERE p.status = 'pending'
+                  AND p.method IN ('payme','click','paylov')
+                  AND datetime(p.created_at) <= datetime('now', '-10 minutes')
+                ORDER BY p.created_at ASC
+            """) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+    except Exception as e:
+        logger.error("check_pending_wlcm_payments DB error: %s", e)
+        return
+
+    for pay in rows:
+        if pay['id'] in _notified_pay_ids:
+            continue
+        try:
+            b = InlineKeyboardBuilder()
+            b.button(text="✅ Premiumni ber", callback_data=f"admin_confirm:{pay['id']}:{pay['user_id']}")
+            b.button(text="❌ Rad et",        callback_data=f"admin_reject:{pay['id']}:{pay['user_id']}")
+            b.adjust(2)
+            text = (
+                f"⏳ <b>Tasdiqlanmagan to'lov</b>\n\n"
+                f"👤 {pay['full_name']} ({pay['phone']})\n"
+                f"💰 {pay['amount']:,} so'm — {pay['method'].upper()}\n"
+                f"🕐 {pay['created_at']}\n"
+                f"🆔 pay_id={pay['id']}\n\n"
+                f"<i>Webhook kelmadi — qo'lda tasdiqlang</i>"
+            )
+            for admin_id in ADMIN_IDS:
+                await bot.send_message(admin_id, text, reply_markup=b.as_markup())
+            _notified_pay_ids.add(pay['id'])
+            logger.info("WLCM polling: admin ga pay_id=%s haqida xabar yuborildi", pay['id'])
+        except Exception as e:
+            logger.warning("check_pending_wlcm_payments notify error: %s", e)
+
+
 # ── Barcha schedulerlar ──────────────────────────────────────
 def setup_scheduler(bot) -> AsyncIOScheduler:
     """Barcha schedulerlarni sozlash"""
@@ -208,6 +263,13 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler.add_job(
         send_evening_summary, CronTrigger(hour=21, minute=0),
         args=[bot], id="evening_summary", replace_existing=True
+    )
+
+    # ── WLCM pending to'lovlar — har 5 daqiqada
+    scheduler.add_job(
+        check_pending_wlcm_payments,
+        "interval", minutes=5,
+        args=[bot], id="wlcm_pending_check", replace_existing=True
     )
 
     return scheduler
