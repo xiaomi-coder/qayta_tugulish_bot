@@ -21,6 +21,11 @@ PAYMENT_CLICK    = os.getenv("PAYMENT_CLICK", "https://my.click.uz/services/pay?
 PRICE_30_DAY   = int(os.getenv("PRICE_30_DAY",   "149000"))
 PRICE_3_MONTH  = int(os.getenv("PRICE_3_MONTH",  "349000"))
 
+# ── LAUNCH LOCK: bot vaqtincha yopiq (faqat ro'yxatdan o'tish + to'lov ochiq)
+# Kontent (mashqlar, ratsion) dushanbadan ochiladi. Ochish uchun .env da LAUNCH_LOCKED=0 qo'ying.
+LAUNCH_LOCKED    = os.getenv("LAUNCH_LOCKED", "1") == "1"
+LAUNCH_DATE_TEXT = os.getenv("LAUNCH_DATE_TEXT", "dushanba")
+
 # ── Kanal
 CHANNEL = os.getenv("CHANNEL", "@QaytaTugulishBot")
 

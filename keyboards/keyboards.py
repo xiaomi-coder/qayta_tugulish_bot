@@ -39,6 +39,7 @@ def broadcast_target_kb() -> InlineKeyboardMarkup:
     b.button(text="Hech to'lamagan",       callback_data="bc_target:never_paid")
     b.button(text="Challengeda yoq",       callback_data="bc_target:inactive")
     b.button(text="Viloyat boyicha",       callback_data="bc_target:region")
+    b.button(text="◀️ Orqaga",             callback_data="admin_main")
     b.adjust(1)
     return b.as_markup()
 
@@ -60,12 +61,17 @@ def never_paid_kb(uid: int) -> InlineKeyboardMarkup:
     b.adjust(2)
     return b.as_markup()
 
-def broadcast_regions_kb() -> InlineKeyboardMarkup:
+def broadcast_regions_kb(selected=None) -> InlineKeyboardMarkup:
+    from aiogram.types import InlineKeyboardButton
+    selected = selected or []
     b = InlineKeyboardBuilder()
     for r in UZBEKISTAN_REGIONS:
-        b.button(text=r, callback_data=f"bc_region:{r}")
-    b.button(text="Orqaga", callback_data="broadcast_back")
+        mark = "✅ " if r in selected else ""
+        b.button(text=f"{mark}{r}", callback_data=f"bc_region:{r}")
     b.adjust(2)
+    b.row(InlineKeyboardButton(text=f"▶️ Yuborish — {len(selected)} viloyat",
+                               callback_data="bc_region_done"))
+    b.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin_main"))
     return b.as_markup()
 
 # ════ USER DETAIL ════
@@ -120,6 +126,22 @@ def gender_kb() -> InlineKeyboardMarkup:
     b.adjust(2)
     return b.as_markup()
 
+# ════ MASHQ TURI: zal / uy (ro'yxatdan o'tishda) ════
+def workout_type_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🏋️ Sport zali", callback_data="wtype:gym")
+    b.button(text="🏠 Uy sharoiti", callback_data="wtype:home")
+    b.adjust(1)
+    return b.as_markup()
+
+# ════ MASHQ VIDEO KATEGORIYASI (admin yuklashda) ════
+def video_category_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🏋️ Sport zali (zal)", callback_data="vcat:gym")
+    b.button(text="🏠 Uy sharoiti",       callback_data="vcat:home")
+    b.adjust(1)
+    return b.as_markup()
+
 # ════ RATSION PLAN RASMI (admin) ════
 def ration_plan_image_kb() -> InlineKeyboardMarkup:
     from config import RATION_PLAN_KEYS
@@ -145,11 +167,14 @@ def challenge_info_kb() -> InlineKeyboardMarkup:
 # ════ PAYMENT METHOD ════
 def payment_method_kb(wlcm_on: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text="🟢 Payme", callback_data="pay_method:payme")
+    b.button(text="🔵 Click", callback_data="pay_method:click")
     if wlcm_on:
-        b.button(text="💚 Paylov (avtomatik)", callback_data="pay_method:paylov")
-    b.button(text="Payme",           callback_data="pay_method:payme")
-    b.button(text="Click",           callback_data="pay_method:click")
-    b.button(text="Karta (otkazma)", callback_data="pay_method:card")
+        b.button(text="🟣 Uzum", callback_data="pay_method:uzum")
+        # Karta (Uzcard/Humo) — Paylovning hosted sahifasi orqali
+        b.button(text="💳 Karta (Uzcard/Humo)", callback_data="pay_method:paylov")
+    else:
+        b.button(text="💳 Karta (otkazma)", callback_data="pay_method:card")
     b.adjust(1)
     return b.as_markup()
 

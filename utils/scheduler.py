@@ -5,7 +5,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from database.db import get_all_users, get_today_water, get_bot_media, confirm_payment_auto
 from data.meals_data import get_day_tip, get_motivation
-from config import ADMIN_IDS, wlcm_enabled
+from config import ADMIN_IDS, wlcm_enabled, LAUNCH_LOCKED
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 # ── Ertalabki xabar + motivatsiya video ──────────────────────
 async def send_morning_message(bot):
     """Har kuni ertalab 07:00 da xabar yuboradi"""
+    if LAUNCH_LOCKED:
+        return  # bot yopiq — eslatmalar dushanbadan
     users = await get_all_users()
     sent = 0
 
@@ -65,6 +67,8 @@ async def send_morning_message(bot):
 # ── Ovqat eslatmasi ──────────────────────────────────────────
 async def send_meal_reminder(bot, meal_name: str, meal_time: str, icon: str):
     """Ovqat vaqtida eslatma"""
+    if LAUNCH_LOCKED:
+        return
     users = await get_all_users()
     for user in users:
         try:
@@ -82,6 +86,8 @@ async def send_meal_reminder(bot, meal_name: str, meal_time: str, icon: str):
 # ── Mashq eslatmasi ──────────────────────────────────────────
 async def send_workout_reminder(bot):
     """17:00 da mashq eslatmasi"""
+    if LAUNCH_LOCKED:
+        return
     users = await get_all_users()
     for user in users:
         try:
@@ -100,11 +106,13 @@ async def send_workout_reminder(bot):
 # ── Suv eslatmasi ────────────────────────────────────────────
 async def send_water_reminder(bot):
     """Suv eslatmasi"""
+    if LAUNCH_LOCKED:
+        return
     users = await get_all_users()
     for user in users:
         try:
             water = await get_today_water(user["telegram_id"])
-            goal = user.get("water_goal", 4000)  # 90-110kg uchun 4-6 litr
+            goal = user.get("water_goal", 5000)  # 90-110kg uchun 4-6 litr
             if water < goal:
                 remaining = goal - water
                 await bot.send_message(
@@ -123,12 +131,14 @@ async def send_water_reminder(bot):
 # ── Kechki hisobot ───────────────────────────────────────────
 async def send_evening_summary(bot):
     """Kechqurun 21:00 da kunlik hisobot"""
+    if LAUNCH_LOCKED:
+        return
     users = await get_all_users()
     for user in users:
         try:
             uid = user["telegram_id"]
             water = await get_today_water(uid)
-            goal = user.get("water_goal", 4000)
+            goal = user.get("water_goal", 5000)
             water_pct = min(int((water / goal) * 100), 100)
 
             await bot.send_message(
@@ -148,12 +158,34 @@ async def send_evening_summary(bot):
 _notified_pay_ids: set = set()  # session ichida takroriy xabar yubormaslik uchun
 
 
+# ── WLCM API orqali to'lov statusini tekshirish ─────────────
+async def _check_wlcm_order_status(order_id: int) -> bool:
+    """WLCM /api/v1/orders/{order_id}/status endpoint ni chaqiradi.
+    is_paid=True bo'lsa True qaytaradi."""
+    import aiohttp
+    from config import WLCM_BASE_URL
+    url = f"{WLCM_BASE_URL}/api/v1/orders/{order_id}/status"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10),
+                                   headers={"User-Agent": "curl/7.88.1"}) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("is_paid", False)
+    except Exception as e:
+        logger.warning("WLCM order status check error (order_id=%s): %s", order_id, e)
+    return False
+
+
 # ── WLCM pending to'lovlarni tekshirish ─────────────────────
 async def check_pending_wlcm_payments(bot):
-    """Har 5 daqiqada: 10 daqiqadan ko'p kutgan pending WLCM to'lovlarni adminга bildiradi."""
+    """Har 2 daqiqada: WLCM to'lovlarini API orqali tekshirib avtomatik tasdiqlaydi.
+    30 daqiqa ichida to'lanmasa — 'expired' qilib, foydalanuvchiga vaqt tugaganini bildiradi.
+    wlcm_order_id bo'lmasa va 15 daqiqa o'tsa — adminга bildiradi."""
     if not wlcm_enabled():
         return
     import aiosqlite
+    from datetime import datetime, timezone
     from config import DB_PATH
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -162,12 +194,11 @@ async def check_pending_wlcm_payments(bot):
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT p.id, p.user_id, p.amount, p.method, p.created_at,
-                       u.full_name, u.phone
+                       p.wlcm_order_id, p.tg_message_id, u.full_name, u.phone
                 FROM payments p
                 JOIN users u ON p.user_id = u.telegram_id
                 WHERE p.status = 'pending'
-                  AND p.method IN ('payme','click','paylov')
-                  AND datetime(p.created_at) <= datetime('now', '-10 minutes')
+                  AND p.method IN ('payme','click','paylov','uzum','card')
                 ORDER BY p.created_at ASC
             """) as cur:
                 rows = [dict(r) for r in await cur.fetchall()]
@@ -176,8 +207,60 @@ async def check_pending_wlcm_payments(bot):
         return
 
     for pay in rows:
-        if pay['id'] in _notified_pay_ids:
+        wlcm_oid = pay.get("wlcm_order_id")
+
+        # To'lov yoshi (daqiqada)
+        try:
+            created = datetime.fromisoformat(pay["created_at"].replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_min = (datetime.now(timezone.utc) - created).total_seconds() / 60
+        except Exception:
+            age_min = 999
+
+        # WLCM order ID bor — API orqali statusni tekshir
+        if wlcm_oid:
+            is_paid = await _check_wlcm_order_status(wlcm_oid)
+            if is_paid:
+                try:
+                    from database.db import confirm_payment_auto
+                    await confirm_payment_auto(bot, pay["id"])
+                    logger.info("WLCM polling: order_id=%s to'langan — pay_id=%s avtomatik tasdiqlandi",
+                                wlcm_oid, pay["id"])
+                except Exception as e:
+                    logger.error("WLCM polling confirm error pay_id=%s: %s", pay["id"], e)
+                continue
+
+            # To'lanmagan va 30 daqiqa o'tgan — vaqt tugadi
+            if age_min >= 30:
+                try:
+                    from database.db import update_payment
+                    await update_payment(pay["id"], status="expired")
+                    msg_id = pay.get("tg_message_id")
+                    if msg_id:
+                        b = InlineKeyboardBuilder()
+                        b.button(text="🔄 Qaytadan to'lash", callback_data="go_payment")
+                        await bot.edit_message_text(
+                            chat_id=pay["user_id"], message_id=msg_id,
+                            text=(
+                                "⏰ <b>Vaqtingiz tugadi</b>\n\n"
+                                "To'lov 30 daqiqa ichida amalga oshmadi.\n"
+                                "Iltimos, to'lovni qaytadan boshlang 👇"
+                            ),
+                            reply_markup=b.as_markup()
+                        )
+                    logger.info("WLCM polling: pay_id=%s vaqti tugadi (expired)", pay["id"])
+                except Exception as e:
+                    logger.warning("WLCM polling expire error pay_id=%s: %s", pay["id"], e)
+            continue  # API orqali tekshirildi, admin ga xabar shart emas
+
+        # wlcm_order_id yo'q va 15 daqiqa o'tgan — adminга bildirish
+        if pay["id"] in _notified_pay_ids:
             continue
+
+        if age_min < 15:
+            continue
+
         try:
             b = InlineKeyboardBuilder()
             b.button(text="✅ Premiumni ber", callback_data=f"admin_confirm:{pay['id']}:{pay['user_id']}")
@@ -189,12 +272,12 @@ async def check_pending_wlcm_payments(bot):
                 f"💰 {pay['amount']:,} so'm — {pay['method'].upper()}\n"
                 f"🕐 {pay['created_at']}\n"
                 f"🆔 pay_id={pay['id']}\n\n"
-                f"<i>Webhook kelmadi — qo'lda tasdiqlang</i>"
+                f"<i>WLCM order ID yo'q — qo'lda tasdiqlang</i>"
             )
             for admin_id in ADMIN_IDS:
                 await bot.send_message(admin_id, text, reply_markup=b.as_markup())
-            _notified_pay_ids.add(pay['id'])
-            logger.info("WLCM polling: admin ga pay_id=%s haqida xabar yuborildi", pay['id'])
+            _notified_pay_ids.add(pay["id"])
+            logger.info("WLCM polling: admin ga pay_id=%s haqida xabar yuborildi", pay["id"])
         except Exception as e:
             logger.warning("check_pending_wlcm_payments notify error: %s", e)
 
@@ -265,10 +348,10 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
         args=[bot], id="evening_summary", replace_existing=True
     )
 
-    # ── WLCM pending to'lovlar — har 5 daqiqada
+    # ── WLCM pending to'lovlar — har 2 daqiqada
     scheduler.add_job(
         check_pending_wlcm_payments,
-        "interval", minutes=5,
+        "interval", minutes=2,
         args=[bot], id="wlcm_pending_check", replace_existing=True
     )
 

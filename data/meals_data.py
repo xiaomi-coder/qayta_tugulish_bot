@@ -125,7 +125,7 @@ def get_day_exercises(day: int) -> list[dict]:
 # KUNLIK MASLAHATLAR
 # ═══════════════════════════════════════
 DAILY_TIPS = [
-    "💡 Har mashqdan keyin 10 daqiqa cho'zilish qiling — bu travmadan himoya qiladi",
+    "💡 Har mashqdan keyin 1 daqiqa cho'zilish qiling — bu travmadan himoya qiladi",
     "💡 Uyquga ketishdan 2 soat oldin ovqat emang — tana yog' yoqadi",
     "💡 Har kuni bir xil vaqtda uyg'oning — bioritm tartibga tushadi",
     "💡 Mushaklar dam olish vaqtida o'sadi, demak uyqu muhim!",

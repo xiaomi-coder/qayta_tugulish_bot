@@ -22,7 +22,7 @@ async def init_db():
                 plan_key TEXT DEFAULT '',
                 challenge_day INTEGER DEFAULT 0,
                 challenge_started TEXT,
-                water_goal INTEGER DEFAULT 3000,
+                water_goal INTEGER DEFAULT 5000,
                 is_premium INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 registered_at TEXT,
@@ -39,11 +39,30 @@ async def init_db():
                 status TEXT DEFAULT 'pending',
                 receipt_file_id TEXT,
                 plan_key TEXT,
+                wlcm_order_id INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 confirmed_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(telegram_id)
             )
         """)
+        # Migration: mavjud DB ga wlcm_order_id ustunini qo'shish
+        try:
+            await db.execute("ALTER TABLE payments ADD COLUMN wlcm_order_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass  # ustun allaqachon bor
+        # Migration: to'lov xabari message_id (vaqt tugaganda tahrirlash uchun)
+        try:
+            await db.execute("ALTER TABLE payments ADD COLUMN tg_message_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass  # ustun allaqachon bor
+        # Migration: foydalanuvchi mashq turi (gym=sport zali, home=uy sharoiti)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN workout_type TEXT DEFAULT 'gym'")
+            await db.commit()
+        except Exception:
+            pass  # ustun allaqachon bor
         # NUTRITION PLANS (admin kiritadi)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS nutrition_plans (
@@ -139,6 +158,26 @@ async def init_db():
             await db.execute("ALTER TABLE exercise_videos ADD COLUMN caption TEXT DEFAULT ''")
         except Exception:
             pass
+        # Migration: eski kun videolari (day{N}_v{i}) 'gym' kategoriyasiga o'tkaziladi
+        # (yangi sxema: {category}_day{N}_v{i}). Idempotent — qayta ishga tushса ta'sir qilmaydi.
+        try:
+            await db.execute(
+                "UPDATE exercise_videos SET exercise_key='gym_'||exercise_key "
+                "WHERE exercise_key GLOB 'day[0-9]*_v[0-9]*'"
+            )
+            await db.commit()
+        except Exception:
+            pass
+        # PROGRESS PHOTOS (boshlang'ich / yakuniy tan surati)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS progress_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                phase TEXT DEFAULT 'before',
+                file_id TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         # RATSION PLAN RASMLARI (80+, 90-110, 110+, 9-13 yosh)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS ration_plan_images (
@@ -286,6 +325,41 @@ async def confirm_payment_auto(bot, pay_id: int) -> None:
     await update_payment(pay_id, status="confirmed", confirmed_at=datetime.now().isoformat())
     await update_user(uid, is_premium=1, challenge_day=1,
                       challenge_started=datetime.now().isoformat())
+
+    # ── Adminlarga "Yangi to'lov" bildirishnomasi ──
+    try:
+        from config import ADMIN_IDS
+        _u = await get_user(uid)
+        _txt = (
+            f"💰 <b>YANGI TO'LOV!</b>\n\n"
+            f"👤 {(_u.get('full_name') if _u else '') or '-'}\n"
+            f"📱 {(_u.get('phone') if _u else '') or '-'}\n"
+            f"💵 {payment.get('amount', 0):,} so'm — {str(payment.get('method','')).upper()}\n"
+            f"🆔 pay_id={pay_id}"
+        )
+        for _aid in ADMIN_IDS:
+            try:
+                await bot.send_message(_aid, _txt, parse_mode="HTML")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ── Bot vaqtincha yopiq: to'lov qabul, lekin kontent dushanbadan ──
+    from config import LAUNCH_LOCKED, LAUNCH_DATE_TEXT
+    if LAUNCH_LOCKED:
+        try:
+            await bot.send_message(
+                uid,
+                f"🎉 <b>TABRIKLAYMIZ! To'lovingiz qabul qilindi!</b> ✅\n\n"
+                f"🔒 Joyingiz band — siz marafon ishtirokchisisiz!\n"
+                f"🗓 Mashqlar va ratsion <b>{LAUNCH_DATE_TEXT}dan</b> boshlanadi.\n\n"
+                f"{LAUNCH_DATE_TEXT.capitalize()}da botda sizga xabar beramiz. Tayyor turing! 💪",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+        return
 
     # Foydalanuvchiga xabar
     from config import PLAN_NAMES, RATION_PLAN_KEYS, get_ration_plan_key
@@ -503,15 +577,17 @@ async def get_exercise_video(key: str) -> dict | None:
             return {"file_id": r[0], "type": r[1], "caption": r[2] or ""} if r else None
 
 # ════════ KUN ASOSIDA VIDEO (har bir kun uchun ko'p video) ════════
-async def save_day_video(day: int, fid: str, vtype: str = "video_note", caption: str = "") -> int:
-    """Kun uchun video saqlaydi. Bir kunga ko'p video bo'lishi mumkin. Qaytaradi: jami video soni."""
+async def save_day_video(day: int, fid: str, vtype: str = "video_note",
+                         caption: str = "", category: str = "gym") -> int:
+    """Kun uchun video saqlaydi. category: 'gym' (sport zali) yoki 'home' (uy sharoiti).
+    Bir kun+kategoriyaga ko'p video bo'lishi mumkin. Qaytaradi: shu kategoriyadagi jami video soni."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key LIKE ?",
-            (f"day{day}_v%",)
+            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key GLOB ?",
+            (f"{category}_day{day}_v*",)
         ) as c:
             count = (await c.fetchone())[0]
-        key = f"day{day}_v{count}"
+        key = f"{category}_day{day}_v{count}"
         await db.execute(
             "INSERT OR REPLACE INTO exercise_videos (exercise_key,video_file_id,video_type,caption) VALUES(?,?,?,?)",
             (key, fid, vtype, caption)
@@ -519,28 +595,53 @@ async def save_day_video(day: int, fid: str, vtype: str = "video_note", caption:
         await db.commit()
         return count + 1
 
-async def get_day_videos(day: int) -> list:
-    """Kun uchun barcha videolarni tartibida qaytaradi."""
+async def save_progress_photo(user_id: int, file_id: str, phase: str = "before") -> int:
+    """Foydalanuvchi tan suratini saqlaydi. phase: 'before' yoki 'after'.
+    Qaytaradi: shu foydalanuvchi+fazadagi jami surat soni."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO progress_photos (user_id, phase, file_id) VALUES (?,?,?)",
+            (user_id, phase, file_id)
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT COUNT(*) FROM progress_photos WHERE user_id=? AND phase=?",
+            (user_id, phase)
+        ) as c:
+            return (await c.fetchone())[0]
+
+async def get_progress_photos(user_id: int, phase: str = "before") -> list:
+    """Foydalanuvchining tan suratlarini (file_id) qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT file_id FROM progress_photos WHERE user_id=? AND phase=? ORDER BY id",
+            (user_id, phase)
+        ) as c:
+            return [r[0] for r in await c.fetchall()]
+
+
+async def get_day_videos(day: int, category: str = "gym") -> list:
+    """Kun+kategoriya uchun barcha videolarni tartibida qaytaradi."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT video_file_id, video_type, caption FROM exercise_videos "
-            "WHERE exercise_key LIKE ? ORDER BY exercise_key",
-            (f"day{day}_v%",)
+            "WHERE exercise_key GLOB ? ORDER BY exercise_key",
+            (f"{category}_day{day}_v*",)
         ) as c:
             rows = await c.fetchall()
             return [{"file_id": r[0], "type": r[1], "caption": r[2] or ""} for r in rows]
 
-async def delete_day_videos(day: int) -> int:
-    """Kunning barcha videolarini o'chiradi. Qaytaradi: o'chirilgan soni."""
+async def delete_day_videos(day: int, category: str = "gym") -> int:
+    """Kun+kategoriyaning barcha videolarini o'chiradi. Qaytaradi: o'chirilgan soni."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key LIKE ?",
-            (f"day{day}_v%",)
+            "SELECT COUNT(*) FROM exercise_videos WHERE exercise_key GLOB ?",
+            (f"{category}_day{day}_v*",)
         ) as c:
             count = (await c.fetchone())[0]
         await db.execute(
-            "DELETE FROM exercise_videos WHERE exercise_key LIKE ?",
-            (f"day{day}_v%",)
+            "DELETE FROM exercise_videos WHERE exercise_key GLOB ?",
+            (f"{category}_day{day}_v*",)
         )
         await db.commit()
         return count

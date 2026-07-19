@@ -1,22 +1,89 @@
 import logging
+import os
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, FSInputFile
 
 from config import (ADMIN_IDS, PAYMENT_CARD, PAYMENT_PAYME, PAYMENT_CLICK,
                     PRICE_30_DAY, get_plan_by_weight, PLAN_NAMES, MUST_JOIN_CHANNEL,
                     RATION_PLAN_KEYS, get_ration_plan_key,
                     WLCM_API_KEY, WLCM_API_SECRET, WLCM_BASE_URL,
-                    WLCM_RETURN_URL, wlcm_enabled)
+                    WLCM_RETURN_URL, wlcm_enabled, LAUNCH_LOCKED, LAUNCH_DATE_TEXT)
 from database.db import *
 from keyboards.keyboards import *
 from data.meals_data import get_day_meals, get_day_exercises, get_day_tip, get_motivation
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# ── To'lov taklifi: chegirma banneri + matn + to'lov usullari ──
+_BANNER_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "payment_banner.jpg"
+)
+_PHOTO_GUIDE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "start_photo_guide.png"
+)
+
+def reg_photo_skip_kb():
+    from aiogram.utils.keyboard import InlineKeyboardBuilder as _IKB
+    b = _IKB(); b.button(text="⏭ O'tkazib yuborish", callback_data="reg_photo_skip")
+    return b.as_markup()
+
+def reg_photo_done_kb():
+    from aiogram.utils.keyboard import InlineKeyboardBuilder as _IKB
+    b = _IKB(); b.button(text="✅ Tayyor, davom etish", callback_data="reg_photo_done")
+    return b.as_markup()
+
+def _payment_caption() -> str:
+    return (
+        "🔥 <b>50% CHEGIRMA — faqat bugun!</b>\n\n"
+        "❌ Oddiy narx: <s>500 000 so'm</s>\n"
+        f"✅ Sizga bugun: <b>{PRICE_30_DAY:,} so'm</b>\n\n"
+        "⏳ Chegirma cheklangan — hoziroq boshlang!\n\n"
+        "Quyidan to'lov usulini tanlang 👇"
+    )
+
+def _launch_lock_text() -> str:
+    return (
+        "🔒 <b>Bot tez orada to'liq ishga tushadi!</b>\n\n"
+        f"🗓 Mashqlar va ratsion <b>{LAUNCH_DATE_TEXT}dan</b> boshlab ochiladi.\n\n"
+        "To'lov qilgan bo'lsangiz — joyingiz band! ✅\n"
+        f"{LAUNCH_DATE_TEXT.capitalize()}da sizga xabar beramiz. Hozircha dam oling! 💪"
+    )
+
+async def _launch_blocked(target, call=None) -> bool:
+    """LAUNCH_LOCKED bo'lsa 'dushanbadan' xabarini yuboradi va True qaytaradi.
+    Kontent handlerlari boshida chaqiriladi."""
+    if LAUNCH_LOCKED:
+        try:
+            await target.answer(_launch_lock_text(), parse_mode="HTML")
+        except Exception:
+            pass
+        if call is not None:
+            try: await call.answer()
+            except Exception: pass
+        return True
+    return False
+
+
+async def send_payment_offer(target) -> None:
+    """Banner rasmni + chegirma matnini + to'lov usullari tugmalarini yuboradi.
+    Rasm alohida, matn+tugma alohida — keyingi edit_text ishlashi uchun."""
+    try:
+        if os.path.exists(_BANNER_PATH):
+            await target.answer_photo(FSInputFile(_BANNER_PATH))
+    except Exception as e:
+        logger.warning("payment banner yuborilmadi: %s", e)
+    await target.answer(
+        _payment_caption(),
+        reply_markup=payment_method_kb(wlcm_on=wlcm_enabled()),
+        parse_mode="HTML"
+    )
 
 
 # ══════════════════════════════════
@@ -119,6 +186,7 @@ class AdminSt(StatesGroup):
     photo_meal   = State()
     photo_file   = State()
     photo_caption = State()   # ovqat rasmi uchun yozuv
+    video_category = State()   # zal / uy tanlash (video yuklashda)
     video_set    = State()
     video_index  = State()
     video_type   = State()
@@ -166,6 +234,9 @@ async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
     if user and user.get("is_premium"):
+        if LAUNCH_LOCKED:
+            await msg.answer(_launch_lock_text(), reply_markup=main_menu_kb(), parse_mode="HTML")
+            return
         # Premium foydalanuvchi — asosiy menyu
         await msg.answer(
             f"{greeting()}, *{user['full_name']}*! 👋\n\n"
@@ -178,11 +249,11 @@ async def cmd_start(msg: Message, state: FSMContext):
     if user and user.get("registered_at") and not user.get("is_premium"):
         # Ro'yxatdan o'tgan lekin to'lamagan
         await msg.answer(
-            f"Salom, *{user['full_name']}*! 👋\n\n"
-            f"Siz hali to'lov qilmagansiz.\n"
-            f"To'lovni amalga oshiring va 30-kunlik challendj boshlang! 💪",
-            reply_markup=payment_method_kb(), parse_mode="Markdown"
+            f"Salom, <b>{user['full_name']}</b>! 👋\n"
+            f"Siz hali to'lov qilmagansiz. 30-kunlik challendjni boshlang! 💪",
+            parse_mode="HTML"
         )
+        await send_payment_offer(msg)
         await state.set_state(PayState.method)
         return
 
@@ -251,10 +322,11 @@ async def cb_check_subscription(call: CallbackQuery, state: FSMContext):
 
     if user and user.get("registered_at") and not user.get("is_premium"):
         await call.message.answer(
-            f"Salom, *{user['full_name']}*! 👋\n\n"
-            f"To'lovni amalga oshiring va 30-kunlik challendj boshlang! 💪",
-            reply_markup=payment_method_kb(), parse_mode="Markdown"
+            f"Salom, <b>{user['full_name']}</b>! 👋\n"
+            f"30-kunlik challendjni boshlang! 💪",
+            parse_mode="HTML"
         )
+        await send_payment_offer(call.message)
         await state.set_state(PayState.method)
         return
 
@@ -403,12 +475,7 @@ async def reg_height(msg: Message, state: FSMContext):
 @router.callback_query(F.data == "go_payment")
 async def cb_go_payment(call: CallbackQuery, state: FSMContext):
     await call.message.edit_reply_markup()
-    await call.message.answer(
-        f"💳 *TO'LOV USULINI TANLANG*\n\n"
-        f"💰 Narx: *{PRICE_30_DAY:,} so'm*\n\n"
-        f"Qaysi usulda to'lashni xohlaysiz?",
-        reply_markup=payment_method_kb(wlcm_on=wlcm_enabled()), parse_mode="Markdown"
-    )
+    await send_payment_offer(call.message)
     await state.set_state(PayState.method)
 
 @router.callback_query(F.data.startswith("pay_method:"))
@@ -422,7 +489,7 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
     await state.update_data(pay_id=pay_id, method=method)
 
     # ── WLCM orqali avtomatik to'lov (payme, click, paylov) ──
-    WLCM_PROVIDERS = {"payme": "🟢 Payme", "click": "🔵 Click", "paylov": "💚 Paylov"}
+    WLCM_PROVIDERS = {"payme": "🟢 Payme", "click": "🔵 Click", "uzum": "🟣 Uzum", "paylov": "💳 Karta (Uzcard/Humo)"}
     if method in WLCM_PROVIDERS and wlcm_enabled():
         from utils.wlcm import create_checkout
         from aiogram.utils.keyboard import InlineKeyboardBuilder as IKB
@@ -437,6 +504,10 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
         )
         data = result.get("data", {})
         checkout_url = data.get("checkout_url")
+        wlcm_order_id = data.get("order_id")
+        if wlcm_order_id:
+            from database.db import update_payment
+            await update_payment(pay_id, wlcm_order_id=wlcm_order_id)
         label = WLCM_PROVIDERS[method]
         if checkout_url:
             b = IKB()
@@ -445,9 +516,13 @@ async def cb_pay_method(call: CallbackQuery, state: FSMContext):
                 f"{label} *ORQALI TO'LOV*\n\n"
                 f"💰 Summa: *{PRICE_30_DAY:,} so'm*\n\n"
                 f"Quyidagi tugmani bosib to'lang.\n"
+                f"⏰ To'lov uchun *30 daqiqa* vaqtingiz bor.\n"
                 f"To'lov tasdiqlangach, premium avtomatik aktivlanadi! ✅",
                 reply_markup=b.as_markup(), parse_mode="Markdown"
             )
+            # Vaqt tugaganda xabarni tahrirlash uchun message_id saqlanadi
+            from database.db import update_payment
+            await update_payment(pay_id, tg_message_id=call.message.message_id)
             await call.answer()
             return
         # checkout URL kelmasa — qo'lda davom et
@@ -682,6 +757,10 @@ async def check_premium(msg: Message) -> bool:
             parse_mode="Markdown"
         )
         return False
+    # Bot vaqtincha yopiq — kontent dushanbadan
+    if LAUNCH_LOCKED:
+        await msg.answer(_launch_lock_text(), parse_mode="HTML")
+        return False
     return True
 
 @router.message(F.text == "🔥 30-Kunlik Challendj")
@@ -819,7 +898,7 @@ async def water_main(msg: Message):
     if not await check_premium(msg): return
     water = await get_today_water(msg.from_user.id)
     user = await get_user(msg.from_user.id)
-    goal = user.get("water_goal", 3000) if user else 3000
+    goal = user.get("water_goal", 5000) if user else 5000
     await msg.answer(
         f"💧 *BUGUNGI SUV TRACKER*\n\n"
         f"{wbar(water, goal)}\n\n"
@@ -896,6 +975,7 @@ async def settings_main(msg: Message):
 # ══════════════════════════════════
 @router.callback_query(F.data == "challenge_main")
 async def cb_challenge_main(call: CallbackQuery):
+    if await _launch_blocked(call.message, call): return
     user = await get_user(call.from_user.id)
     completed = await get_completed_days(call.from_user.id)
     current = user.get("challenge_day",1) if user else 1
@@ -910,13 +990,15 @@ async def cb_challenge_main(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("day:"))
 async def cb_day(call: CallbackQuery):
+    if await _launch_blocked(call.message, call): return
     from database.db import get_day_videos
     day   = int(call.data.split(":")[1])
     user  = await get_user(call.from_user.id)
     completed = await get_completed_days(call.from_user.id)
     is_done   = day in completed
     water     = await get_today_water(call.from_user.id)
-    day_videos = await get_day_videos(day)
+    wtype = (user or {}).get("workout_type") or "gym"
+    day_videos = await get_day_videos(day, wtype)
 
     # ── 1. Kun sarlavhasi ──
     await call.message.edit_text(
@@ -924,7 +1006,7 @@ async def cb_day(call: CallbackQuery):
         f"_{get_motivation(day)}_\n\n"
         f"💡 _{get_day_tip(day)}_\n\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"💧 Suv: {wbar(water, 3000)}",
+        f"💧 Suv: {wbar(water, 5000)}",
         parse_mode="Markdown"
     )
 
@@ -1035,6 +1117,7 @@ async def cb_complete(call: CallbackQuery):
 # ══════════════════════════════════
 @router.callback_query(F.data.startswith("meals:"))
 async def cb_meals(call: CallbackQuery):
+    if await _launch_blocked(call.message, call): return
     day = int(call.data.split(":")[1])
     user = await get_user(call.from_user.id)
     weight = float(user.get("weight", 100)) if user else 100.0
@@ -1145,10 +1228,13 @@ async def cb_meal_toggle(call: CallbackQuery):
 # ══════════════════════════════════
 @router.callback_query(F.data.startswith("exercises:"))
 async def cb_exercises(call: CallbackQuery):
+    if await _launch_blocked(call.message, call): return
     from database.db import get_day_videos
     day = int(call.data.split(":")[1])
+    user = await get_user(call.from_user.id)
+    wtype = (user or {}).get("workout_type") or "gym"
     logged = await get_logged_exercises(call.from_user.id, day)
-    day_videos = await get_day_videos(day)
+    day_videos = await get_day_videos(day, wtype)
     all_done = len(logged) > 0  # Hech bo'lmasa bitta bajarilgan bo'lsa "bajarildi"
 
     if day_videos:
@@ -1286,7 +1372,7 @@ async def cb_ex_toggle(call: CallbackQuery):
 async def cb_water(call: CallbackQuery):
     amount = int(call.data.split(":")[1])
     user = await get_user(call.from_user.id)
-    goal = user.get("water_goal", 3000) if user else 3000
+    goal = user.get("water_goal", 5000) if user else 5000
     total = await add_water(call.from_user.id, amount)
     await call.answer(f"💧 +{amount}ml!")
     # day ni state dan emas — message reply_markup dan olamiz
@@ -1302,7 +1388,7 @@ async def cb_water(call: CallbackQuery):
 async def cb_water_day(call: CallbackQuery):
     day = int(call.data.split(":")[1])
     user = await get_user(call.from_user.id)
-    goal = user.get("water_goal", 3000) if user else 3000
+    goal = user.get("water_goal", 5000) if user else 5000
     water = await get_today_water(call.from_user.id)
     await call.message.edit_text(
         f"💧 *SUV TRACKER*\n\n{wbar(water, goal)}\n\n"
@@ -1317,7 +1403,7 @@ async def cb_water_day(call: CallbackQuery):
 async def cb_main_menu_back(call: CallbackQuery):
     """Suv trackerdan asosiy menyuga qaytish"""
     user = await get_user(call.from_user.id)
-    goal = user.get("water_goal", 3000) if user else 3000
+    goal = user.get("water_goal", 5000) if user else 5000
     water = await get_today_water(call.from_user.id)
     try:
         await call.message.delete()
@@ -1333,9 +1419,10 @@ async def cb_main_menu_back(call: CallbackQuery):
 # ADMIN
 # ══════════════════════════════════
 @router.message(Command("admin"))
-async def admin_panel(msg: Message):
+async def admin_panel(msg: Message, state: FSMContext):
     if msg.from_user.id not in ADMIN_IDS:
         await msg.answer("❌ Ruxsat yo'q!"); return
+    await state.clear()   # har qanday rejimni (broadcast va h.k.) bekor qiladi
     total = await get_users_count()
     premium = await get_premium_count()
     payments = await get_pending_payments()
@@ -1371,6 +1458,12 @@ async def admin_broadcast_start(call: CallbackQuery, state: FSMContext):
 @router.message(AdminSt.broadcast)
 async def admin_broadcast_send(msg: Message, state: FSMContext):
     if msg.from_user.id not in ADMIN_IDS: return
+    # Xavfsizlik: buyruq (/admin, /start ...) yoki bo'sh matn — broadcast QILMAYMIZ
+    if not msg.text or msg.text.startswith("/"):
+        await state.clear()
+        await msg.answer("↩️ Broadcast bekor qilindi (buyruq yozildi).",
+                         reply_markup=admin_kb())
+        return
     await state.clear()
     users = await get_all_users()
     sent = 0
@@ -1781,8 +1874,25 @@ async def admin_photo_caption_save(msg: Message, state: FSMContext):
 @router.callback_query(F.data == "admin:upload_video")
 async def admin_upload_video(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
+    from keyboards.keyboards import video_category_kb
     await call.message.edit_text(
         "🎬 *MASHQ VIDEOSI YUKLASH*\n\n"
+        "Video qaysi turdagi mashqlar uchun?",
+        reply_markup=video_category_kb(), parse_mode="Markdown"
+    )
+    await state.set_state(AdminSt.video_category); await call.answer()
+
+
+@router.callback_query(F.data.startswith("vcat:"), AdminSt.video_category)
+async def admin_video_category(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    category = call.data.split(":")[1]
+    if category not in ("gym", "home"):
+        category = "gym"
+    await state.update_data(video_category=category)
+    label = "🏋️ Sport zali" if category == "gym" else "🏠 Uy sharoiti"
+    await call.message.edit_text(
+        f"🎬 *MASHQ VIDEOSI YUKLASH* — {label}\n\n"
         "Qaysi kun uchun video? (1-30):",
         parse_mode="Markdown"
     )
@@ -1796,12 +1906,15 @@ async def admin_video_day_select(msg: Message, state: FSMContext):
     except Exception:
         await msg.answer("❌ 1-30 orasida kun raqami kiriting:"); return
     from database.db import get_day_videos
-    existing = await get_day_videos(day)
+    data = await state.get_data()
+    category = data.get("video_category", "gym")
+    existing = await get_day_videos(day, category)
     await state.update_data(video_day=day)
     ex_count = len(existing)
+    label = "🏋️ Sport zali" if category == "gym" else "🏠 Uy sharoiti"
     info = f"_(Bu kun uchun allaqachon {ex_count} ta video bor)_\n\n" if ex_count else ""
     await msg.answer(
-        f"📅 *{day}-kun* tanlandi\n\n{info}"
+        f"📅 *{day}-kun* — {label} tanlandi\n\n{info}"
         f"Video turini tanlang:",
         reply_markup=video_type_kb(f"day{day}"),
         parse_mode="Markdown"
@@ -1841,9 +1954,10 @@ async def _save_and_confirm(msg, state, file_id, vtype):
     from database.db import save_day_video
     data = await state.get_data()
     day = data.get("video_day", 1)
+    category = data.get("video_category", "gym")
     caption = data.get("next_caption", "")
     await state.update_data(next_caption="")  # caption ishlatildi, tozala
-    total = await save_day_video(day, file_id, vtype, caption)
+    total = await save_day_video(day, file_id, vtype, caption, category)
     tip = f" | _{caption}_" if caption else ""
     t = "⭕" if vtype == "video_note" else "📹"
     await msg.answer(
@@ -1890,11 +2004,13 @@ async def _finish_video_upload(msg_or_msg, state):
     from database.db import get_day_videos
     data = await state.get_data()
     day = data.get("video_day", 1)
-    videos = await get_day_videos(day)
+    category = data.get("video_category", "gym")
+    videos = await get_day_videos(day, category)
+    label = "🏋️ Sport zali" if category == "gym" else "🏠 Uy sharoiti"
     await state.clear()
     try:
         await msg_or_msg.edit_text(
-            f"✅ *{day}-kun mashq videolari saqlandi!*\n"
+            f"✅ *{day}-kun mashq videolari saqlandi!* ({label})\n"
             f"📹 Jami: *{len(videos)}* ta video",
             reply_markup=None, parse_mode="Markdown"
         )
@@ -1913,8 +2029,9 @@ async def admin_video_caption_legacy(msg: Message, state: FSMContext):
     pass
 
 @router.callback_query(F.data == "admin_main")
-async def cb_admin_main(call: CallbackQuery):
+async def cb_admin_main(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
+    await state.clear()   # broadcast va boshqa rejimlarni bekor qiladi
     total = await get_users_count()
     premium = await get_premium_count()
     payments = await get_pending_payments()
@@ -1927,16 +2044,32 @@ async def cb_admin_main(call: CallbackQuery):
 @router.callback_query(F.data == "admin:users")
 async def admin_users(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS: return
+    import html
+    from keyboards.keyboards import export_kb
     users = await get_all_users()
-    premium = [u for u in users if u.get("is_premium")]
+    total = len(users)
+    premium = sum(1 for u in users if u.get("is_premium"))
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_n = sum(1 for u in users if str(u.get("created_at", "")).startswith(today))
+
+    # So'nggi 10 ta (yangi)
+    lines = []
+    for u in reversed(users[-10:]):
+        name  = html.escape(str(u.get('full_name') or '-'))
+        phone = html.escape(str(u.get('phone') or '-'))
+        crown = '👑' if u.get('is_premium') else ''
+        lines.append(f"• {name} — {phone} {crown}")
+    recent_text = "\n".join(lines) or "—"
+
     await call.message.edit_text(
-        f"👥 *FOYDALANUVCHILAR*\n\n"
-        f"Jami: *{len(users)}*\n"
-        f"Premium: *{len(premium)}*\n\n"
-        f"So'nggi 5 ta:\n" +
-        "\n".join([f"• {u['full_name']} — {u['weight']}kg {'👑' if u.get('is_premium') else ''}"
-                   for u in users[-5:]]),
-        reply_markup=back_kb("admin_main"), parse_mode="Markdown"
+        f"👥 <b>FOYDALANUVCHILAR</b>\n\n"
+        f"📊 Jami: <b>{total}</b> ta\n"
+        f"👑 Premium: <b>{premium}</b> ta\n"
+        f"🆓 Oddiy: <b>{total - premium}</b> ta\n"
+        f"📅 Bugun: <b>{today_n}</b> ta yangi\n\n"
+        f"🆕 <b>So'nggi 10 ta:</b>\n{recent_text}\n\n"
+        f"📤 <b>To'liq ro'yxat</b>ni yuklab oling 👇",
+        reply_markup=export_kb(), parse_mode="HTML"
     )
     await call.answer()
 
@@ -1946,6 +2079,8 @@ async def admin_users(call: CallbackQuery):
 # Reg state ga region qo'shamiz
 class RegUpdated(StatesGroup):
     region = State()
+    workout = State()   # zal / uy tanlash
+    photo = State()     # boshlang'ich tan surati (ixtiyoriy)
 
 # gender callback ni yangilaymiz — region so'raydi
 # (handlers.py dagi reg_gender ni o'zgartirish o'rniga yangi handler)
@@ -1980,61 +2115,106 @@ async def reg_region(msg: Message, state: FSMContext):
         await msg.answer("❌ Ro'yxatdan tanlang:", reply_markup=__import__('keyboards.keyboards', fromlist=['region_kb']).region_kb())
         return
 
+    from keyboards.keyboards import workout_type_kb
+    await state.update_data(region=region)
+    await msg.answer("✅ Viloyat tanlandi!", reply_markup=ReplyKeyboardRemove())
+    await msg.answer(
+        "🏋️ *Mashqlarni qayerda bajarasiz?*\n\n"
+        "🏋️ *Sport zali* — uskunalar bilan mashqlar\n"
+        "🏠 *Uy sharoiti* — uyda, uskunasiz ozish mashqlari\n\n"
+        "Quyidan tanlang 👇",
+        reply_markup=workout_type_kb(), parse_mode="Markdown"
+    )
+    await state.set_state(RegUpdated.workout)
+
+
+@router.callback_query(F.data.startswith("wtype:"), RegUpdated.workout)
+async def cb_reg_workout(call: CallbackQuery, state: FSMContext):
+    from config import get_plan_by_weight
+
+    workout_type = call.data.split(":")[1]
+    if workout_type not in ("gym", "home"):
+        workout_type = "gym"
     data = await state.get_data()
-    await state.clear()
 
-    age_group = data.get("age_group", "adult")
+    uid = call.from_user.id
     w = data.get("weight", 0) or 0
-    h = data.get("height", 0) or 0
-    gender = data.get("gender", "erkak")
-
-    # BMI faqat kattalarda (va vazn/bo'y kiritilganda)
-    if age_group == "adult" and w > 0 and h > 0:
-        bmi = w / ((h / 100) ** 2)
-        bmi_text = ("🔵 Kam" if bmi < 18.5 else
-                    "🟢 Ideal" if bmi < 25 else
-                    "🟡 Ortiqcha" if bmi < 30 else
-                    "🔴 Semiz")
-        bmi_line = f"📊 BMI: {bmi:.1f} — {bmi_text}\n"
-        wh_line  = f"📏 {h} sm | ⚖️ {w} kg\n"
-    else:
-        bmi = 0
-        bmi_line = ""
-        wh_line  = ""
-
-    plan_key  = get_plan_by_weight(w) if w > 0 else "standard"
-    plan_name = PLAN_NAMES[plan_key]
-    gender_emoji = "👨" if gender == "erkak" else "👩"
-
+    plan_key = get_plan_by_weight(w) if w > 0 else "standard"
     await update_user(
-        msg.from_user.id,
+        uid,
         full_name=data.get("name", ""),
         phone=data.get("phone", ""),
-        weight=w, height=h,
-        gender=gender, region=region,
+        weight=w, height=data.get("height", 0) or 0,
+        gender=data.get("gender", "erkak"),
+        region=data.get("region", ""),
         plan_key=plan_key,
-        age_group=age_group,
+        age_group=data.get("age_group", "adult"),
+        workout_type=workout_type,
         registered_at=datetime.now().isoformat()
     )
+    await call.answer()
 
+    # ── Boshlang'ich tan surati (IXTIYORIY) ──
+    gender = data.get("gender", "erkak")
+    erk_note = ("👨 Erkaklar uchun ham <b>ixtiyoriy</b>, lekin iloji bo'lsa yuboring — "
+                "o'z natijangizni ko'rish uchun juda foydali!\n" if gender == "erkak" else "")
+    caption = (
+        "📸 <b>BOSHLANG'ICH SURAT</b> (ixtiyoriy)\n\n"
+        "Marafon boshlanishidan oldin hozirgi holatingizni suratga oling — "
+        "30 kundan keyin farqni o'z ko'zingiz bilan ko'rasiz! 🔥\n\n"
+        "❗️ Bu — <b>ixtiyoriy</b>, majburiy emas.\n"
+        "🔒 Suratlar faqat sizning natijangiz uchun.\n"
+        f"{erk_note}\n"
+        "Yuqoridagi qoidalar bo'yicha suratingizni (old / yon / orqa) yuboring, "
+        "yoki <b>ixtiyoriy</b> bo'lgani uchun \"O'tkazib yuborish\"ni bosing 👇"
+    )
+    try:
+        if os.path.exists(_PHOTO_GUIDE_PATH):
+            await call.message.answer_photo(FSInputFile(_PHOTO_GUIDE_PATH))
+    except Exception:
+        pass
+    await call.message.answer(caption, reply_markup=reg_photo_skip_kb(), parse_mode="HTML")
+    await state.set_state(RegUpdated.photo)
+
+
+async def _finish_registration(target, uid: int) -> None:
+    """Ro'yxatdan o'tishni yakunlaydi: xulosa + challenge/to'lov ekrani."""
+    from keyboards.keyboards import challenge_info_kb
+    from config import PLAN_NAMES, PRICE_30_DAY
+    user = await get_user(uid)
+    if not user:
+        return
+    w = user.get("weight", 0) or 0
+    h = user.get("height", 0) or 0
+    gender = user.get("gender", "erkak")
+    age_group = user.get("age_group", "adult")
+
+    if age_group == "adult" and w > 0 and h > 0:
+        bmi = w / ((h / 100) ** 2)
+        bmi_text = ("🔵 Kam" if bmi < 18.5 else "🟢 Ideal" if bmi < 25 else
+                    "🟡 Ortiqcha" if bmi < 30 else "🔴 Semiz")
+        bmi_line = f"📊 BMI: {bmi:.1f} — {bmi_text}\n"
+        wh_line = f"📏 {h} sm | ⚖️ {w} kg\n"
+    else:
+        bmi_line = ""
+        wh_line = ""
+    plan_name = PLAN_NAMES.get(user.get("plan_key", "standard"), "")
+    gender_emoji = "👨" if gender == "erkak" else "👩"
+    wt_line = "🏋️ Sport zali mashqlari\n" if user.get("workout_type") == "gym" else "🏠 Uy sharoiti mashqlari\n"
     child_note = "\n👶 _9-13 yosh — maxsus bolalar ratsioni_\n" if age_group == "child" else ""
 
-    await msg.answer(
+    await target.answer(
         f"✅ *Ro'yxatdan o'tdingiz!*\n\n"
-        f"{gender_emoji} *{data.get('name', '')}*\n"
-        f"📱 {data.get('phone', '')}\n"
-        f"📍 {region}\n"
-        f"{wh_line}"
-        f"{bmi_line}"
-        f"{child_note}"
+        f"{gender_emoji} *{user.get('full_name','')}*\n"
+        f"📱 {user.get('phone','')}\n"
+        f"📍 {user.get('region','')}\n"
+        f"{wh_line}{wt_line}{bmi_line}{child_note}"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🥗 *Sizning ratsioningiz:*\n{plan_name}\n\n"
         f"_To'lovdan so'ng avtomatik ochiladi!_",
-        reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
-
-    await msg.answer(
+    await target.answer(
         f"🔥 *30-KUNLIK CHALLENDJ*\n\n"
         f"✅ Har kuni ovqat retsepti + rasm\n"
         f"✅ Har kuni mashq + video\n"
@@ -2042,11 +2222,32 @@ async def reg_region(msg: Message, state: FSMContext):
         f"✅ Vazningizga mos ratsion\n"
         f"✅ Kunlik eslatmalar\n\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"💰 *Narx: {PRICE_30_DAY:,} so'm*\n\n"
+        f"🔥 *50% CHEGIRMA — bugun!*\n"
+        f"❌ Oddiy narx: 500 000 so'm\n"
+        f"✅ Sizga: *{PRICE_30_DAY:,} so'm*\n\n"
         f"Boshlashga tayyormisiz? 👇",
         reply_markup=challenge_info_kb(),
         parse_mode="Markdown"
     )
+
+
+@router.message(RegUpdated.photo, F.photo)
+async def reg_photo_received(msg: Message, state: FSMContext):
+    from database.db import save_progress_photo
+    file_id = msg.photo[-1].file_id
+    cnt = await save_progress_photo(msg.from_user.id, file_id, "before")
+    await msg.answer(
+        f"✅ Surat qabul qilindi! ({cnt} ta)\n"
+        f"Yana yuborishingiz (old / yon / orqa), yoki tugatishingiz mumkin 👇",
+        reply_markup=reg_photo_done_kb()
+    )
+
+
+@router.callback_query(F.data.in_({"reg_photo_skip", "reg_photo_done"}), RegUpdated.photo)
+async def cb_reg_photo_finish(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.answer()
+    await _finish_registration(call.message, call.from_user.id)
 
 # ══════════════════════════════════════════════════════
 # /users — ADMIN FOYDALANUVCHILAR RO'YXATI
@@ -2107,20 +2308,21 @@ async def cb_export(call: CallbackQuery):
         await call.answer("❌"); return
 
     from database.db import get_all_users_detailed
-    import io
+    from aiogram.types import BufferedInputFile
 
     fmt = call.data.split(":")[1]
     users = await get_all_users_detailed()
     await call.answer("⏳ Tayyorlanmoqda...")
+    ts = datetime.now().strftime('%Y%m%d_%H%M')
 
     if fmt == "csv":
         lines = ["ID,Ism,Telefon,Viloyat,Vazn,Boy,Jins,Plan,Premium,Kun,Sana"]
         for u in users:
             lines.append(
                 f"{u['telegram_id']},"
-                f"{u.get('full_name','').replace(',','')},"
+                f"{str(u.get('full_name','')).replace(',',' ')},"
                 f"{u.get('phone','')},"
-                f"{u.get('region','').replace(',','')},"
+                f"{str(u.get('region','')).replace(',',' ')},"
                 f"{u.get('weight','')},"
                 f"{u.get('height','')},"
                 f"{u.get('gender','')},"
@@ -2129,48 +2331,30 @@ async def cb_export(call: CallbackQuery):
                 f"{u.get('challenge_day',0)},"
                 f"{str(u.get('created_at',''))[:10]}"
             )
-        content = "\n".join(lines)
-        filename = f"users_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-        doc = io.BytesIO(content.encode('utf-8-sig'))
-        doc.name = filename
-        await call.message.answer_document(
-            document=doc,
-            caption=f"📊 CSV — {len(users)} ta foydalanuvchi"
-        )
+        data = "\n".join(lines).encode('utf-8-sig')
+        doc = BufferedInputFile(data, filename=f"users_{ts}.csv")
+        cap = f"📊 CSV — {len(users)} ta foydalanuvchi"
     else:
         # TXT format
         lines = ["="*40, "QAYTA TUGILISH - FOYDALANUVCHILAR",
-                f"Sana: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-                f"Jami: {len(users)} ta", "="*40, ""]
+                 f"Sana: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                 f"Jami: {len(users)} ta", "="*40, ""]
         for idx, u in enumerate(users, 1):
-            name = str(u.get("full_name","Noma'lum"))
-            phone = str(u.get("phone","-"))
-            region = str(u.get("region","-"))
-            weight = str(u.get("weight","-"))
-            height = str(u.get("height","-"))
-            gender = str(u.get("gender","-"))
-            plan = str(u.get("plan_key","-"))
-            prem = "Ha" if u.get("is_premium") else "Yoq"
-            date = str(u.get("created_at",""))[:10]
-            entry = (
-                f"{idx}. {name}\n"
-                f"   Tel: {phone}\n"
-                f"   Viloyat: {region}\n"
-                f"   Vazn: {weight} kg\n"
-                f"   Boy: {height} sm\n"
-                f"   Jins: {gender}\n"
-                f"   Plan: {plan}\n"
-                f"   Premium: {prem}\n"
-                f"   Sana: {date}\n"
-                f"   {chr(45)*30}"
+            lines.append(
+                f"{idx}. {u.get('full_name','Nomalum')}\n"
+                f"   Tel: {u.get('phone','-')}\n"
+                f"   Viloyat: {u.get('region','-')}\n"
+                f"   Vazn: {u.get('weight','-')} kg | Boy: {u.get('height','-')} sm\n"
+                f"   Jins: {u.get('gender','-')} | Plan: {u.get('plan_key','-')}\n"
+                f"   Premium: {'Ha' if u.get('is_premium') else 'Yoq'}\n"
+                f"   Sana: {str(u.get('created_at',''))[:10]}\n"
+                f"   {'-'*30}"
             )
-            lines.append(entry)
-        doc = io.BytesIO(content.encode('utf-8'))
-        doc.name = filename
-        await call.message.answer_document(
-            document=doc,
-            caption=f"📄 TXT — {len(users)} ta foydalanuvchi"
-        )
+        data = "\n".join(lines).encode('utf-8')
+        doc = BufferedInputFile(data, filename=f"users_{ts}.txt")
+        cap = f"📄 TXT — {len(users)} ta foydalanuvchi"
+
+    await call.message.answer_document(document=doc, caption=cap)
 
 # ══════════════════════════════════════════════════════
 # /broadcast — KUCHLI BROADCAST
@@ -2203,44 +2387,79 @@ async def bc_target(call: CallbackQuery, state: FSMContext):
 
     if target == "region":
         from keyboards.keyboards import broadcast_regions_kb
+        await state.update_data(selected_regions=[])
         await call.message.edit_text(
-            "📍 Qaysi viloyat?",
-            reply_markup=broadcast_regions_kb()
+            "📍 <b>Viloyat(lar)ni tanlang</b>\n"
+            "Bir nechta tanlashingiz mumkin (✅), keyin <b>Yuborish</b> ni bosing 👇",
+            reply_markup=broadcast_regions_kb([]), parse_mode="HTML"
         )
         await state.set_state(BroadcastSt.region)
-    else:
-        from database.db import get_users_by_filter
-        if target == "premium":
-            users = await get_users_by_filter(premium=1)
-        elif target == "free":
-            users = await get_users_by_filter(premium=0)
-        else:
-            users = await get_all_users()
+        await call.answer()
+        return
 
-        await state.update_data(target_users=[u["telegram_id"] for u in users])
-        await call.message.edit_text(
-            f"✅ *{len(users)} ta* foydalanuvchiga yuboriladi\n\n"
-            f"Xabar matnini yozing:\n"
-            f"_(Markdown formati ishlaydi)_",
-            parse_mode="Markdown"
-        )
-        await state.set_state(BroadcastSt.text)
+    from database.db import (get_users_by_filter, get_pending_users_ids,
+                             get_never_paid_users, get_inactive_premium_users)
+    if target == "premium":
+        ids = [u["telegram_id"] for u in await get_users_by_filter(premium=1)]
+    elif target == "free":
+        ids = [u["telegram_id"] for u in await get_users_by_filter(premium=0)]
+    elif target == "pending":
+        ids = await get_pending_users_ids()
+    elif target == "never_paid":
+        ids = [u["telegram_id"] for u in await get_never_paid_users()]
+    elif target == "inactive":
+        ids = [u["telegram_id"] for u in await get_inactive_premium_users()]
+    else:  # all
+        ids = [u["telegram_id"] for u in await get_all_users()]
+
+    await state.update_data(target_users=list(set(ids)))
+    await call.message.edit_text(
+        f"✅ <b>{len(set(ids))} ta</b> foydalanuvchiga yuboriladi\n\n"
+        f"Endi xabar matnini yozing 👇",
+        parse_mode="HTML"
+    )
+    await state.set_state(BroadcastSt.text)
     await call.answer()
 
 @router.callback_query(BroadcastSt.region, F.data.startswith("bc_region:"))
 async def bc_region_select(call: CallbackQuery, state: FSMContext):
+    """Viloyatni belgilash/bekor qilish (ko'p tanlash)."""
+    from keyboards.keyboards import broadcast_regions_kb
     region = call.data.split(":", 1)[1]
+    data = await state.get_data()
+    selected = list(data.get("selected_regions", []))
+    if region in selected:
+        selected.remove(region)
+    else:
+        selected.append(region)
+    await state.update_data(selected_regions=selected)
+    try:
+        await call.message.edit_reply_markup(reply_markup=broadcast_regions_kb(selected))
+    except Exception:
+        pass
+    await call.answer(f"{len(selected)} ta viloyat tanlandi")
+
+
+@router.callback_query(BroadcastSt.region, F.data == "bc_region_done")
+async def bc_region_done(call: CallbackQuery, state: FSMContext):
+    """Tanlangan viloyatlardagi foydalanuvchilarni yig'ib, matn so'raydi."""
+    import html
     from database.db import get_users_by_filter
-    users = await get_users_by_filter(region=region)
-    await state.update_data(
-        region=region,
-        target_users=[u["telegram_id"] for u in users]
-    )
+    data = await state.get_data()
+    selected = data.get("selected_regions", [])
+    if not selected:
+        await call.answer("Kamida 1 ta viloyat tanlang!", show_alert=True)
+        return
+    ids = []
+    for r in selected:
+        ids += [u["telegram_id"] for u in await get_users_by_filter(region=r)]
+    ids = list(set(ids))
+    await state.update_data(target_users=ids)
     await call.message.edit_text(
-        f"📍 {region}\n"
-        f"✅ *{len(users)} ta* foydalanuvchiga yuboriladi\n\n"
-        f"Xabar matnini yozing:",
-        parse_mode="Markdown"
+        f"📍 <b>{html.escape(', '.join(selected))}</b>\n"
+        f"✅ <b>{len(ids)} ta</b> foydalanuvchiga yuboriladi\n\n"
+        f"Endi xabar matnini yozing 👇",
+        parse_mode="HTML"
     )
     await state.set_state(BroadcastSt.text)
     await call.answer()
@@ -2343,25 +2562,25 @@ async def cmd_stats(msg: Message):
     month = datetime.now().strftime("%Y-%m")
     month_users = sum(1 for u in users if str(u.get("created_at","")).startswith(month))
 
+    import html
     region_top = list(regions.items())[:5]
-    region_text = "\n".join([f"  {i+1}. {r}: *{c}* ta" for i,(r,c) in enumerate(region_top)])
+    region_text = "\n".join([f"  {i+1}. {html.escape(str(r))}: <b>{c}</b> ta"
+                             for i, (r, c) in enumerate(region_top)]) or "  —"
 
     await msg.answer(
-        f"📊 *TO'LIQ STATISTIKA*\n\n"
-        f"👥 *FOYDALANUVCHILAR:*\n"
-        f"  Jami: *{total}* ta\n"
-        f"  👑 Premium: *{premium}* ta\n"
-        f"  🆓 Oddiy: *{total-premium}* ta\n"
-        f"  📅 Bugun: *{today_users}* ta yangi\n"
-        f"  📆 Bu oy: *{month_users}* ta yangi\n\n"
-        f"💰 *DAROMAD:*\n"
-        f"  Jami: *{premium * PRICE_30_DAY:,}* so'm\n"
-        f"  Bu oy: hisoblash uchun to'lov bazasi kerak\n\n"
-        f"📍 *TOP VILOYATLAR:*\n{region_text}\n\n"
-        f"🔥 *CHALLENDJ:*\n"
-        f"  Faol: *{sum(1 for u in users if u.get('challenge_day',0)>0)}* ta\n"
-        f"  Tugagan (30 kun): hisoblash uchun challenge_progress kerak",
-        parse_mode="Markdown"
+        f"📊 <b>TO'LIQ STATISTIKA</b>\n\n"
+        f"👥 <b>FOYDALANUVCHILAR:</b>\n"
+        f"  Jami: <b>{total}</b> ta\n"
+        f"  👑 Premium: <b>{premium}</b> ta\n"
+        f"  🆓 Oddiy: <b>{total-premium}</b> ta\n"
+        f"  📅 Bugun: <b>{today_users}</b> ta yangi\n"
+        f"  📆 Bu oy: <b>{month_users}</b> ta yangi\n\n"
+        f"💰 <b>DAROMAD (taxminiy):</b>\n"
+        f"  <b>{premium * PRICE_30_DAY:,}</b> so'm\n\n"
+        f"📍 <b>TOP VILOYATLAR:</b>\n{region_text}\n\n"
+        f"🔥 <b>CHALLENDJ:</b>\n"
+        f"  Faol: <b>{sum(1 for u in users if u.get('challenge_day',0)>0)}</b> ta",
+        parse_mode="HTML"
     )
 
 # ══════════════════════════════════════════════════════
